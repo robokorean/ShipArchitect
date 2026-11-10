@@ -6,6 +6,7 @@ from PySide6.QtGui import QPainter,QPen,QColor,QImage
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QComboBox,QSpinBox,QLabel,QCheckBox
 from .model import Bounds
 from .display import overlay_indices_visible,visible_space_runs
+from .space_display import visible as space_visible,alpha as space_alpha,candidate_spaces,color as display_color
 from .views import color,BACKGROUND
 
 VIEWS={'평면도 (위)':(0,2,1,False),'정면도':(0,1,2,False),'후면도':(0,1,2,True),'좌측면도':(2,1,0,True),'우측면도':(2,1,0,False)}
@@ -51,7 +52,7 @@ class PlaneCanvas(QWidget):
         if image is not None:p.drawImage(QRectF(self.ox,self.oy,size[u]*self.scale,size[v]*self.scale),image)
         owner=self.panel.owner
         for s in owner.doc.spaces:
-            if not s['visible']:continue
+            if not space_visible(owner.view,s):continue
             low=s['runs'][0] if s['runs'] else None
             # Exact overlay mask is built into the plane image; no permission bbox approximation.
         selected=getattr(getattr(owner,'workbench',None),'selected_xyz',None)
@@ -122,15 +123,15 @@ class AxisPlan(QWidget):
             visible=self.owner.view.display_state.visible_indices(ii.ravel(),doc,self.owner.view).reshape(a.shape)
             if self.owner.view.show_blocks:
                 keep=visible&sc.solid(a);rgba[keep]=palette[a[keep]]
-        if self.owner.view.show_spaces:
+        if self.owner.view.show_spaces or candidate_spaces(self.owner.view):
             from .space_model import contains
-            for s in doc.spaces:
-                if not s['visible']:continue
+            for s in (doc.spaces if self.owner.view.show_spaces else [])+candidate_spaces(self.owner.view):
+                if not space_visible(self.owner.view,s,s.get('_candidate',False)):continue
                 if self.owner.view.exact_space_only and s['id']!=doc.active_space_id:continue
                 inside=sampled_space_mask({'runs':visible_space_runs(s,doc,self.owner.view)},f,None if self.projection.isChecked() else index,step,a.shape)
                 if not self.projection.isChecked():
                     xyz[f][:]=index;x,y,z=xyz;overlay_ii=(y*size[2]+z)*size[0]+x;inside &= overlay_indices_visible(overlay_ii,doc,self.owner.view)
-                c=QColor(s['color']);alpha=s['opacity']/255
+                c=QColor(display_color(s));alpha=space_alpha(self.owner.view,s,s.get('_candidate',False))/255
                 rgba[inside,:3]=(rgba[inside,:3]*(1-alpha)+np.array([c.red(),c.green(),c.blue()])*alpha).astype(np.uint8)
         if v==1:rgba=rgba[::-1]
         if flip:rgba=rgba[:,::-1]

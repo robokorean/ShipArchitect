@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QDockWidget,QTree
 from .display import DisplayState,validate_settings
 from .axis_plan import AxisPlan
 from .space_model import bbox,contains
+from .space_display import visible as space_visible
 from .model import Bounds
 from .schematic import atomic_write
 from .navigation import state_parts
@@ -154,7 +155,7 @@ class Workbench:
         payload=self.settings();self.owner.doc.view_settings=payload
         try:atomic_write(self.display_path(),json.dumps({'size':self.owner.doc.schematic.size,'settings':payload},ensure_ascii=False).encode())
         except OSError as e:self.owner.statusBar().showMessage('표시 설정 저장 실패: '+str(e))
-    def settings(self):return {'axis':self.cut_axis.currentText(),'position':self.cut_position.value(),'side':self.cut_side.currentText(),'exterior':self.exterior.isChecked(),'roof':self.roof.isChecked(),'occluders':self.occluders.isChecked(),'hidden':sorted(self.hidden_blocks),'hidden_overlays':sorted(self.hidden_overlays),'hidden_groups':sorted(self.hidden_groups),'isolation':self.isolation,'selected':self.selection_key,'selected_keys':[i.data(0,ROLE) for i in self.tree.selectedItems() if i.data(0,ROLE)],'selected_xyz':self.selected_xyz,'selected_kind':self.selected_kind,'layer':self.owner.layer.value(),'plane_orientation':self.axis_plan.orientation.currentText(),'plane_slice':self.axis_plan.slice.value(),'plane_projection':self.axis_plan.projection.isChecked(),'show_blocks':self.owner.view.show_blocks,'show_spaces':self.owner.view.show_spaces,'only_space':self.owner.space_manager.only.isChecked(),'ghost_floors':self.owner.space_manager.ghost.isChecked(),'legacy_cut':self.owner.clip.isChecked(),'single_layer':self.owner.single_layer.isChecked(),'zone_clip':self.owner.zone_clip.isChecked(),'expanded':self.expanded_keys()}
+    def settings(self):return {'space_presentation':getattr(self.owner.view,'space_display',{}),'axis':self.cut_axis.currentText(),'position':self.cut_position.value(),'side':self.cut_side.currentText(),'exterior':self.exterior.isChecked(),'roof':self.roof.isChecked(),'occluders':self.occluders.isChecked(),'hidden':sorted(self.hidden_blocks),'hidden_overlays':sorted(self.hidden_overlays),'hidden_groups':sorted(self.hidden_groups),'isolation':self.isolation,'selected':self.selection_key,'selected_keys':[i.data(0,ROLE) for i in self.tree.selectedItems() if i.data(0,ROLE)],'selected_xyz':self.selected_xyz,'selected_kind':self.selected_kind,'layer':self.owner.layer.value(),'plane_orientation':self.axis_plan.orientation.currentText(),'plane_slice':self.axis_plan.slice.value(),'plane_projection':self.axis_plan.projection.isChecked(),'show_blocks':self.owner.view.show_blocks,'show_spaces':self.owner.view.show_spaces,'only_space':self.owner.space_manager.only.isChecked(),'ghost_floors':self.owner.space_manager.ghost.isChecked(),'legacy_cut':self.owner.clip.isChecked(),'single_layer':self.owner.single_layer.isChecked(),'zone_clip':self.owner.zone_clip.isChecked(),'expanded':self.expanded_keys()}
     def attach_document(self):
         self.busy=True;self.tree.clear();self.signature=None;self.pending_route=None;self.selected_xyz=None;self.selection_key=None;self.isolation=None;self.display_exterior=None;self.hidden_blocks=set();self.hidden_overlays=set();self.hidden_groups=set();self.evidence=[];self.equipment=[]
         p=getattr(self.owner.doc,'view_settings',{})
@@ -163,6 +164,7 @@ class Workbench:
             if q.get('size')==list(self.owner.doc.schematic.size):p=q['settings']
         except (OSError,ValueError,KeyError,TypeError):pass
         p=validate_settings(p,self.owner.doc.schematic.size)
+        self.owner.doc.view_settings=p
         manager=self.owner.space_manager
         for widget,key,default in ((manager.blocks,'show_blocks',True),(manager.overlays,'show_spaces',True),(manager.only,'only_space',False),(manager.ghost,'ghost_floors',False),(self.owner.clip,'legacy_cut',False),(self.owner.single_layer,'single_layer',False),(self.owner.zone_clip,'zone_clip',False)):
             widget.blockSignals(True);widget.setChecked(p.get(key,default));widget.blockSignals(False)
@@ -211,7 +213,9 @@ class Workbench:
         self.owner.view.validation_spaces=[]
         self.busy=True
         for w in (self.exterior,self.roof,self.occluders):w.setChecked(False)
-        self.cut_axis.setCurrentText('none');self.hidden_blocks.clear();self.hidden_overlays.clear();self.hidden_groups.clear();self.isolation=None;self.busy=False
+        self.cut_axis.setCurrentText('none');self.hidden_blocks.clear();self.hidden_overlays.clear();self.hidden_groups.clear();self.isolation=None;
+        if hasattr(self.owner,'space_tools'):self.owner.view.space_display['visibility']={};self.owner.space_tools.only.setChecked(False)
+        self.busy=False
         self.owner.clip.setChecked(False);self.owner.single_layer.setChecked(False);self.owner.zone_clip.setChecked(False);self.owner.space_manager.only.setChecked(False);self.owner.space_manager.ghost.setChecked(False);self.owner.space_manager.blocks.setChecked(True);self.owner.space_manager.overlays.setChecked(True)
         self.owner.doc.floor_visibility={};self.owner.space_manager.update_floor_range();self.owner.space_manager.show_all(True);self.apply();self.rebuild_tree(True)
     def isolate(self):
@@ -234,11 +238,7 @@ class Workbench:
     def hide_selected(self):
         if self.selected_xyz:
             w,h,l=self.owner.doc.schematic.size;x,y,z=self.selected_xyz;self.hidden_blocks.add(y*w*l+z*w+x);self.apply()
-        else:
-            ids={item.data(0,ROLE) for item in self.tree.selectedItems()};spaces=copy.deepcopy(self.owner.doc.spaces)
-            for s in spaces:
-                if 'space:'+s['id'] in ids:s['visible']=False
-            self.owner.space_manager.changed(spaces,'space_visibility',self.owner.doc.active_space_id)
+        else:self.owner.space_tools.visibility(self.owner.space_tools.ids(),False)
         self.rebuild_tree(True)
     def guard(self,p):
         if not len(p.indices):return True
@@ -266,12 +266,18 @@ class Workbench:
         root=self.tree.invisibleRootItem();spaces=self.node(root,'공간','spaces',self.owner.view.show_spaces);floors=self.node(root,'층','floors',any(d.floor_visibility.get(str(y),True) for y in self.owner.space_manager.levels));blocks=self.node(root,'실제 블록','blocks',self.owner.view.show_blocks)
         routes=self.node(root,'경로','routes','routes' not in self.hidden_groups);connections=self.node(root,'연결 후보','connections','connections' not in self.hidden_groups);equipment=self.node(root,'설비','equipment','equipment' not in self.hidden_groups)
         if not nav.equipment:equipment.setDisabled(True);equipment.setText(1,'설비 분석 필요')
+        candidate_root=self.node(root,'인식 후보','candidates',getattr(self.owner.view,'space_display',{}).get('show_candidates',True));candidate_groups={}
+        from .space_display import external as external_space
+        for c in d.space_candidates:
+            label='외부·큰 미분리' if external_space(c,d) else {'auto':'자동 등록 가능','registered':'등록됨','review':'검토 필요','exclude':'제외'}.get(c.get('decision'),'이전 인식')
+            if label not in candidate_groups:candidate_groups[label]=self.node(candidate_root,label,'candgroup:'+label)
+            key='candidate:'+c['id'];self.node(candidate_groups[label],c['id']+' · '+str(c.get('volume',c.get('area',0)))+'셀',key,space_visible(self.owner.view,c,True),label);self.records[key]=c
         order=sorted(d.spaces,key=lambda s:(bbox(s)[0][1],s['name']) if self.sort.currentIndex()==0 else s['name'] if self.sort.currentIndex()==1 else -sum(b-a+1 for _,_,a,b in s['runs']))
         groups={}
         for s in order:
             y=bbox(s)[0][1]
             if y not in groups:groups[y]=self.node(spaces,'층 Y='+str(y),'spacefloor:'+str(y))
-            key='space:'+s['id'];self.nodes[key]=self.node(groups[y],s['name'],key,s['visible'],s['purpose']);self.records[key]=s
+            key='space:'+s['id'];self.nodes[key]=self.node(groups[y],s['name'],key,space_visible(self.owner.view,s),s['purpose']);self.records[key]=s
         for y in self.owner.space_manager.levels:self.nodes['floor:'+str(y)]=self.node(floors,'Y='+str(y),'floor:'+str(y),d.floor_visibility.get(str(y),True))
         self.nodes['route:current']=self.node(routes,'현재 경로','route:current','route:current' not in self.hidden_overlays,'표시' if getattr(self.owner.view,'route_path',[]) else '경로 찾기 필요')
         path=getattr(self.owner.view,'route_path',[])
@@ -327,10 +333,13 @@ class Workbench:
         elif key=='floors':
             d.floor_visibility={str(y):value for y in self.owner.space_manager.levels};self.owner.space_manager.update_floor_range();self.apply()
         elif key.startswith('space:') or key.startswith('spacefloor:'):
-            spaces=copy.deepcopy(d.spaces)
-            for s in spaces:
-                if key=='space:'+s['id'] or key=='spacefloor:'+str(bbox(s)[0][1]):s['visible']=value
-            self.owner.space_manager.changed(spaces,'space_visibility',d.active_space_id)
+            ids={s['id'] for s in d.spaces if key=='space:'+s['id'] or key=='spacefloor:'+str(bbox(s)[0][1])}
+            self.owner.space_tools.visibility(ids,value)
+        elif key=='candidates':
+            self.owner.view.space_display['show_candidates']=value;self.owner.space_tools.refresh()
+        elif key.startswith('candidate:') or key.startswith('candgroup:'):
+            ids={c['id'] for c in d.space_candidates if key=='candidate:'+c['id'] or key.startswith('candgroup:') and self.nodes.get('candidate:'+c['id']).parent().data(0,ROLE)==key}
+            self.owner.space_tools.visibility(ids,value)
         elif key.startswith('floor:'):
             d.floor_visibility[key.split(':')[1]]=value;self.owner.space_manager.update_floor_range();self.apply()
         elif key.startswith('equip:'):
@@ -378,6 +387,11 @@ class Workbench:
         item=self.tree.currentItem() or items[-1];key=item.data(0,ROLE);self.selection_key=key
         if key and key.startswith('space:'):
             self.selected_xyz=None;self.selected_kind='space';self.owner.space_manager.select_id(key.split(':',1)[1]);self.inspect_space()
+        elif key and key.startswith('candidate:'):
+            panel=self.owner.space_view;panel.bulk.group.setCurrentIndex(0);panel.bulk.reason.setCurrentIndex(0)
+            for i in range(panel.list.count()):
+                if panel.list.item(i).data(ROLE)==key.split(':',1)[1]:panel.list.setCurrentRow(i);break
+            self.inspector.setPlainText(json.dumps({k:v for k,v in self.records[key].items() if k not in ('volume_runs','footprint')},ensure_ascii=False,indent=2))
         elif key in self.records:
             record=self.records[key];self.selected_kind='equipment' if key.startswith('equip:') else 'connection';xyz=record.get('position') or record.get('positions',[None])[0]
             if xyz:self.selected_xyz=tuple(xyz);self.owner.layer.setValue(xyz[1])

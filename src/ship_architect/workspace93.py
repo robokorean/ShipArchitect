@@ -41,6 +41,8 @@ class Workspace93:
         for dock in (self.b.scene_dock,self.b.editor_dock,ui.analysis_dock,self.b.view_dock):
             dock.setMaximumWidth(600);dock.topLevelChanged.connect(lambda floating,d=dock:d.setMaximumWidth(16777215 if floating else 600))
         w.resizeDocks([self.b.scene_dock,self.b.editor_dock],[270,390],Qt.Orientation.Horizontal)
+        from .space_tools import SpaceTools
+        self.space_tools=SpaceTools(w)
     def show(self,widget):
         self.bottom.setCurrentWidget(widget);self.result_dock.show();self.result_dock.raise_();
         if not self.result_dock.isFloating():self.w.resizeDocks([self.result_dock],[230],Qt.Orientation.Vertical)
@@ -112,4 +114,6 @@ class Workspace93:
         try:
             d=self.w.doc;state=copy.deepcopy(d.analysis_state);state.setdefault('equipment_rules',{}).pop(self.rule_key(),None);commit(d,state,action='equipment_rule_remove');self.w.refresh_history();self.w.network_view.invalidate();self.w.network_view.scan_equipment()
         except Exception as e:self.w.error(e)
-    def attach(self):self.w.space_view.bulk.attach();self.w.view.validation_spaces=[]
+    def attach(self):
+        self.w.space_view.bulk.attach();self.w.view.validation_spaces=[]
+        if hasattr(self,'space_tools'):self.space_tools.attach()

@@ -19,9 +19,11 @@ def test_ui_create_merge_split_properties_visibility_and_undo(window):
  m.edit_bounds(Bounds((2,1,2),(3,5,7)),'split');wait_for(lambda:ready(w));assert len(w.doc.spaces)==2
  m.name.setText('함교');m.purpose.setText('항해');m.opacity.setValue(110);m.space_color='#123456';m.properties();assert w.doc.active_space()['name']=='함교'
  assert w.doc.active_space()['opacity']==110 and w.doc.active_space()['color']=='#123456'
- m.show_all(False);assert not any(s['visible'] for s in w.doc.spaces)
- m.show_all(True);assert all(s['visible'] for s in w.doc.spaces)
- for _ in range(4):w.undo();wait_for(lambda:ready(w))
+ snapshot=copy.deepcopy(w.doc.spaces)
+ from ship_architect.space_display import visible
+ m.show_all(False);assert not any(visible(w.view,s) for s in w.doc.spaces) and w.doc.spaces==snapshot
+ m.show_all(True);assert all(visible(w.view,s) for s in w.doc.spaces) and w.doc.spaces==snapshot
+ for _ in range(2):w.undo();wait_for(lambda:ready(w))
  assert len(w.doc.spaces)==1 and w.doc.spaces[0]['runs']==before
  assert not w.doc.schematic.blocks.any()
 

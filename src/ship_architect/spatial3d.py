@@ -155,6 +155,8 @@ def _recognize_3d(doc,bounds,progress=None,cancel=None,partial=False):
     if len(candidates)>512:
         for c in candidates[512:]:c['volume_runs']=[]
         candidates=candidates[:512]
+    from .space_classification import classify
+    classify(candidates,doc)
     summary={'method':'3d_air_components','revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'component_count':label-core_count,'partition_candidate_count':core_count,'omitted_candidate_count':omitted_candidates,'omitted_run_cells':sum(omitted.values()),'limited':limited or bool(omitted) or bool(omitted_candidates),'counts':dict(Counter(c['decision'] for c in candidates)),'note':'실제 6방향 빈 셀 연결성. 열린 경계/미확인 블록은 자동 확정하지 않습니다.'}
     def details():
         for c in candidates:

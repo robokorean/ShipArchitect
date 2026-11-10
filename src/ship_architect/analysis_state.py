@@ -56,7 +56,7 @@ def crop(c,b,size):
             a=max(a,b.lo[0]);B=min(B,b.hi[0])
             if a<=B:runs.append([y,z,a,B])
     if not runs:raise ValueError('현재 3D 선택과 후보의 실제 셀이 겹치지 않습니다.')
-    c['volume_runs']=normalize(runs,size);lo,hi=bbox({'runs':c['volume_runs']});c['lo']=list(lo);c['hi']=list(hi);c['fingerprint']=fingerprint(c['volume_runs']);c['decision']='review';c['user_modified']=True;c['reasons']=['user_boundary_crop'];c['volume']=sum(b-a+1 for _,_,a,b in runs);refresh_shape(c)
+    c['volume_runs']=normalize(runs,size);lo,hi=bbox({'runs':c['volume_runs']});c['lo']=list(lo);c['hi']=list(hi);c['fingerprint']=fingerprint(c['volume_runs']);c['decision']='review';c['user_modified']=True;c['reasons']=['user_boundary_crop'];c['space_class']='manual_review';c['volume']=sum(b-a+1 for _,_,a,b in runs);refresh_shape(c)
 
 def apply_rules(result,state,size):
     result=copy.deepcopy(result)
@@ -86,6 +86,9 @@ def register(doc,result,automatic=True,ids=None):
     for c in candidates:
         if ids is not None and c['id'] not in ids:continue
         if c.get('decision')=='registered':continue
+        if c.get('space_class')=='exterior_or_merged':
+            if automatic:continue
+            raise ValueError('외부 공기/큰 미분리 후보는 방으로 등록하지 않습니다. 작은 경계로 보정하거나 재분석하세요.')
         if automatic and c['decision']!='auto':continue
         if automatic and c.get('method')=='exterior_voxel_mesh' and c.get('validation',{}).get('mesh_volume_matches_voxels') is not True:continue
         required=('closed_within_scope','two_cell_clearance','usable_floor','wide_floor_patch','known_boundary_geometry','complete_component','original_connected_component')
@@ -101,7 +104,7 @@ def register(doc,result,automatic=True,ids=None):
         if overlap:c['decision']='review';c['reasons'].append('existing_space_overlap_protected');continue
         # Revalidate actual cells at the current block epoch before any registration.
         if any(np_solid(doc,y,z,a,b) for y,z,a,b in c['volume_runs']):raise ValueError('후보에 실제 블록이 생겼습니다. 재분석하세요.')
-        s=new_space(c['volume_runs'],doc.schematic.size,'3D 공간 '+str(len(spaces)+1),'미지정');s.update(origin='auto' if automatic else 'manual',auto_registered=automatic,recognition={'fingerprint':c['fingerprint'],'method':c.get('method','3d_air_components'),'checks':c['checks'],'mesh':c.get('mesh'),'virtual_boundary':c.get('virtual_boundary')})
+        s=new_space(c['volume_runs'],doc.schematic.size,'3D 공간 '+str(len(spaces)+1),'미지정');s.update(origin='auto' if automatic else 'manual',auto_registered=automatic,recognition={'fingerprint':c['fingerprint'],'source_fingerprint':c.get('source_fingerprint',c['fingerprint']),'method':c.get('method','3d_air_components'),'checks':c['checks'],'mesh':c.get('mesh'),'virtual_boundary':c.get('virtual_boundary')})
         spaces.append(s);added.append(s['id']);
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
         c['decision']='registered';c['confirmed']=True

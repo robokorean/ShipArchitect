@@ -21,7 +21,7 @@ class IntegratedUI:
         self.path=owner.data_dir/'ribbon091.json'
         self.configure_drawing();self.configure_properties();self.configure_routes();self.configure_visibility();self.build_ribbon()
         self.b.scene_dock.setWindowTitle('장면 탐색기');self.b.editor_dock.setWindowTitle('속성 편집기')
-        owner.setWindowTitle('Ship Architect v0.9.3.1 · 통합 설계 작업공간')
+        owner.setWindowTitle('Ship Architect v0.9.3.2 · 통합 설계 작업공간')
         # Legacy toolbar actions remain the same QAction objects used by the ribbon.
         for bar in (owner.toolbar,*self.b.modebars):bar.hide()
         self.b.toolmenu.clear();self.b.toolmenu.addAction('리본 그룹 전체 복원',self.restore_groups)
@@ -187,7 +187,7 @@ class IntegratedUI:
     def analyze(self):self.open_analysis();self.owner.network_view.analyze()
     def equipment(self):self.open_analysis();self.owner.network_view.scan_equipment()
     def performance(self):
-        self.open_properties(3);self.owner.statusBar().showMessage('CPU 전체 메시 유지: 드래그 중 16만 픽셀, 종료 후 정밀 복원. 실측·미검증: docs/TEST_REPORT_V0931.md',20000)
+        self.open_properties(3);self.owner.statusBar().showMessage('CPU 전체 메시 유지: 드래그 중 16만 픽셀, 종료 후 정밀 복원. 실측·미검증: 별도 개발 검증 자료',20000)
     def restore_groups(self):
         for a in self.b.toolmenu.actions():
             if a.isCheckable():a.setChecked(True)
@@ -212,7 +212,7 @@ class IntegratedUI:
 
     def ui_state(self):
         w=self.owner
-        return {'mode':self.categories.tabText(self.categories.currentIndex()),'property_page':self.properties.tabText(self.properties.currentIndex()),'central':w.tabs.tabText(w.tabs.currentIndex()),'window':[w.width(),w.height()], 'docks':[{'name':d.objectName(),'visible':d.isVisible(),'floating':d.isFloating(),'area':w.dockWidgetArea(d).value,'geometry':[d.x(),d.y(),d.width(),d.height()]} for d in (self.b.scene_dock,self.b.editor_dock,self.b.view_dock,self.analysis_dock,*([self.tasks.result_dock] if hasattr(self,'tasks') else []),*self.b.floating.values())]}
+        return {'space_presentation':getattr(w.view,'space_display',{}),'selected_space':w.doc.active_space_id,'mode':self.categories.tabText(self.categories.currentIndex()),'property_page':self.properties.tabText(self.properties.currentIndex()),'central':w.tabs.tabText(w.tabs.currentIndex()),'window':[w.width(),w.height()], 'docks':[{'name':d.objectName(),'visible':d.isVisible(),'floating':d.isFloating(),'area':w.dockWidgetArea(d).value,'geometry':[d.x(),d.y(),d.width(),d.height()]} for d in (self.b.scene_dock,self.b.editor_dock,self.b.view_dock,self.analysis_dock,*([self.tasks.result_dock] if hasattr(self,'tasks') else []),*self.b.floating.values())]}
     def log_ui(self,reason):
         from .diagnostics import event
         if not hasattr(self,'ui_summary'):return

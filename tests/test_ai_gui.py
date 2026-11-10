@@ -14,6 +14,11 @@ def wait_for(predicate,seconds=15):
     if predicate():return
     loop=QEventLoop();timer=QTimer(loop);timer.setInterval(10);timer.timeout.connect(lambda:loop.quit() if predicate() else None)
     end=QTimer(loop);end.setSingleShot(True);end.timeout.connect(loop.quit);timer.start();end.start(int(seconds*1000));loop.exec()
+    if not predicate():
+        for cell in (predicate.__closure__ or []):
+            value=cell.cell_contents
+            if hasattr(value,'view') and hasattr(value,'ai_panel'):
+                print('GUI_WAIT_STATE',{'mesh_busy':value.view.mesh_busy,'render_busy':value.view.render_busy,'mesh_worker':value.view.mesh_worker is not None,'render_worker':value.view.render_worker is not None,'timer':value.view.render_timer.isActive(),'probe':value.ai_panel.probe_job is not None,'operation':value.operation is not None})
     assert predicate(),'AI GUI timeout'
 
 
@@ -22,7 +27,7 @@ def ready(w):return not w.view.workers_running() and not w.view.render_timer.isA
 
 @pytest.fixture
 def window():
-    app=QApplication.instance() or QApplication([]);w=MainWindow();w.show();w.ai_panel.timer.stop()
+    app=QApplication.instance() or QApplication([]);w=MainWindow();w.show();w.ai_panel.timer.stop();w.ai_panel.startup_probe.stop()
     old={key:w.ai_panel.settings.value('ai/'+key) for key in ('url','model','timeout')}
     errors=[];w.error=errors.append
     wait_for(lambda:ready(w) and not w.ai_panel.busy())

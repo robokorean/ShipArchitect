@@ -387,11 +387,11 @@ class View3D(QWidget):
         self.render_timer.stop()
         self.mesh_busy=self.mesh_worker is not None
         self.render_busy=self.render_worker is not None
-        for job in (self.mesh_worker,self.render_worker):
+        for job in (self.mesh_worker,self.render_worker,getattr(self,'geometry_worker',None)):
             if job and job.isRunning():job.requestInterruption()
 
     def workers_running(self):
-        return bool(self.mesh_busy or self.render_busy or self.mesh_request is not None or self.render_request is not None
+        return bool(getattr(self,'geometry_worker',None) is not None or self.mesh_busy or self.render_busy or self.mesh_request is not None or self.render_request is not None
             or self.mesh_worker is not None or self.render_worker is not None)
 
     def camera(self):
@@ -458,14 +458,14 @@ class View3D(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         self.box(p, self.doc.selection)
         self.space_hits=[]
-        if self.show_spaces and not self.interaction_active:
+        if self.show_spaces:
             from .space_ui import draw_spaces_3d
             draw_spaces_3d(self,p)
         from .network_ui import draw_route_3d
         draw_route_3d(self,p)
         workbench=getattr(self,'workbench',None)
         if workbench is not None:workbench.draw_3d(p)
-        if getattr(self,'candidate_boxes',[]) and not self.interaction_active:
+        if getattr(self,'candidate_boxes',[]):
             from .space_geometry import draw_volumes
             draw_volumes(self,p,candidates=True)
         if getattr(self,'validation_spaces',[]) and not self.interaction_active:
@@ -481,7 +481,7 @@ class View3D(QWidget):
         p.setPen(QColor('#e7eef5'))
         p.drawText(16, 26, '3D  /  ORTHOGRAPHIC     ' + ('미승인 · '+self.preview_side if self.pending else '승인된 설계'))
         p.setPen(QColor('#94a9bd'))
-        p.drawText(16, self.height()-18, f'{len(self.mesh):,} 표면 · {self.mesh.stats.get("visible_chunks",0):,} 청크' + (' · 메시 생성 중' if self.mesh_busy else ' · 렌더링 중' if self.render_busy else ''))
+        p.drawText(16, self.height()-18, f'{len(self.mesh):,} 표면 · {self.mesh.stats.get("visible_chunks",0):,} 청크' + (' · 공간 상세는 조작 후 복원' if self.interaction_active else '') + (' · 메시 생성 중' if self.mesh_busy else ' · 렌더링 중' if self.render_busy else ''))
         if self.error:
             p.setPen(QColor('#ffba8a'))
             p.drawText(QRectF(20, 45, self.width()-40, 110), Qt.TextFlag.TextWordWrap, self.error)

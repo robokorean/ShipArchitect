@@ -18,7 +18,8 @@ class AIPanel(QWidget):
         super().__init__()
         self.owner=owner;self.job=None;self.probe_job=None;self.serial=0;self.closed=False
         self.last_plan=None;self.last_scope=None;self.last_result=None;self.current_trace=None
-        self.settings=QSettings('ShipArchitect','ShipArchitect')
+        from .preferences import settings
+        self.settings=settings(owner.data_dir)
         self.parent_trace=None;self.active_doc=None
         try:self.chat_store=ConversationStore(owner.data_dir/'conversations.sqlite3')
         except Exception as exc:
@@ -57,7 +58,7 @@ class AIPanel(QWidget):
         tabs.addTab(self.plan_text,'검증된 계획');tabs.addTab(self.context_text,'전달한 구역 정보');tabs.setMaximumHeight(210);body.addWidget(tabs)
         layout.addWidget(self.body);self.body.hide()
         self.timer=QTimer(self);self.timer.setInterval(15000);self.timer.timeout.connect(self.probe);self.timer.start()
-        QTimer.singleShot(250,self.probe)
+        self.startup_probe=QTimer(self);self.startup_probe.setSingleShot(True);self.startup_probe.timeout.connect(self.probe);self.startup_probe.start(250)
 
     def toggle_panel(self):
         self.body.setVisible(not self.body.isVisible())

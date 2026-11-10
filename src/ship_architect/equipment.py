@@ -7,11 +7,11 @@ from .diagnostics import evidence,event
 
 def category(state):
     name=state.split('[')[0];namespace,_,path=name.partition(':')
-    if namespace in ('computercraft','cc_tweaked','cc','advancedperipherals'):return 'ComputerCraft'
-    if any(k in path for k in ('thruster','propeller','propulsion','rocket_engine','ion_engine')):return '추진 설비 후보'
+    if namespace in ('computercraft','cc_tweaked','cc','advancedperipherals','computercraft_tweaked') or namespace.startswith('computercraft_'):return 'ComputerCraft'
+    if any(k in path for k in ('thruster','propeller','propulsion','rocket_engine','ion_engine','thrust','ship_engine','engine_controller')):return '추진 설비 후보'
     if any(k in path for k in ('generator','battery','alternator','capacitor','dynamo','reactor','energy_cell','creative_motor','electric_motor','power_cell')):return '전력 설비 후보'
-    if namespace=='create' and 'elevator' in path:return 'Create 엘리베이터 후보'
-    if namespace=='create' or namespace.startswith('create_'):return 'Create'
+    if (namespace=='create' or namespace.startswith('create')) and 'elevator' in path:return 'Create 엘리베이터 후보'
+    if namespace=='create' or namespace.startswith(('create_','createaddition','createconnected','createnewage','createpropulsion')):return 'Create'
     return None
 
 def classification(doc,state):

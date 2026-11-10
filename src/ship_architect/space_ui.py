@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt,QRectF,QPointF,QTimer
 from PySide6.QtGui import QColor,QPen,QPolygonF,QPainter,QImage
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QListWidget,QListWidgetItem,QLabel,QLineEdit,QComboBox,QSpinBox,QCheckBox,QPlainTextEdit,QAbstractItemView,QColorDialog,QScrollArea)
 from .model import Bounds
+from .space_display import visible as space_visible,alpha as space_alpha,candidate_spaces,color as display_color
 from .space_model import new_space,box_runs,bbox,normalize,subtract,from_candidate,statistics,connections,analyze_connections,contains,validate_space,plane_rectangles
 from .views import LayerView,BACKGROUND
 from .schematic import atomic_write
@@ -52,10 +53,10 @@ class SpacePlan(LayerView):
                     w,h,l=self.doc.schematic.size
                     p.drawImage(QRectF(self.ox+a*self.scale,self.oz+z*self.scale,(b-a)*self.scale,(Z-z)*self.scale),self.image,QRectF(a/w*self.image.width(),z/l*self.image.height(),(b-a)/w*self.image.width(),(Z-z)/l*self.image.height()))
         self.layout_map();m=self.manager
-        if m.overlays.isChecked():
-            for s in self.doc.spaces:
-                if not s['visible'] or m.only.isChecked() and s['id']!=self.doc.active_space_id:continue
-                c=QColor(s['color']);c.setAlpha(s['opacity']);p.setBrush(c);p.setPen(QPen(QColor(s['color']),.4))
+        if m.overlays.isChecked() or candidate_spaces(m.owner.view):
+            for s in (self.doc.spaces if m.overlays.isChecked() else [])+candidate_spaces(m.owner.view):
+                if not space_visible(m.owner.view,s,s.get('_candidate',False)) or m.only.isChecked() and s['id']!=self.doc.active_space_id:continue
+                c=QColor(display_color(s));c.setAlpha(space_alpha(m.owner.view,s,s.get('_candidate',False)));p.setBrush(c);p.setPen(QPen(QColor(s['color']),.4))
                 for a,z,b,Z in (overlay_rectangles(s,self.layer,self.doc,self.manager.owner.view) if hasattr(self.manager.owner.view,'display_state') else plane_rectangles(s,self.layer)):p.drawRect(QRectF(self.ox+a*self.scale,self.oz+z*self.scale,(b-a)*self.scale,(Z-z)*self.scale))
         # Pending diff is exact, separate from permission / space visibility.
         proposal=self.manager.owner.proposal
@@ -181,7 +182,7 @@ class SpaceManager(QWidget):
             label=f"Y={bbox(s)[0][1]}" if mode=='층별 그룹' else s['purpose'] if mode=='용도별 그룹' else origin if mode=='자동/사용자 그룹' else None
             if label is not None and label!=group:
                 header=QListWidgetItem('── '+label+' ──');header.setFlags(Qt.ItemFlag.NoItemFlags);self.list.addItem(header);group=label
-            n=sum(b-a+1 for _,_,a,b in s['runs']);item=QListWidgetItem(f"{s['name']} · {s['purpose']} · {n:,}칸 · {origin}");item.setData(Qt.ItemDataRole.UserRole,s['id']);item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Checked if s['visible'] else Qt.CheckState.Unchecked);self.list.addItem(item)
+            n=sum(b-a+1 for _,_,a,b in s['runs']);item=QListWidgetItem(f"{s['name']} · {s['purpose']} · {n:,}칸 · {origin}");item.setData(Qt.ItemDataRole.UserRole,s['id']);item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Checked if space_visible(self.owner.view,s) else Qt.CheckState.Unchecked);self.list.addItem(item)
             if s['id']==d.active_space_id:current=item
         if current:self.list.setCurrentItem(current)
         self.restoring=False;self.load_properties();self.display();self.autosave.start()
@@ -202,7 +203,7 @@ class SpaceManager(QWidget):
     def select_at(self,xyz):
         w,h,l=self.owner.doc.schematic.size;idx=xyz[1]*w*l+xyz[2]*w+xyz[0]
         for s in reversed(self.owner.doc.spaces):
-            if s['visible'] and contains(s,[idx],(w,h,l))[0]:self.select_id(s['id']);self.refresh();return
+            if space_visible(self.owner.view,s) and contains(s,[idx],(w,h,l))[0]:self.select_id(s['id']);self.refresh();return
     def clear_active(self):
         self.owner.reject();self.owner.doc.active_space_id=None;self.refresh();self.status.setText('일반 사각 선택입니다. 공간 경계 제한이 해제됩니다. 보호 장치는 계속 보존합니다.')
     def create(self):
@@ -263,7 +264,9 @@ class SpaceManager(QWidget):
             s=new_space([r for s in chosen for r in s['runs']],d.schematic.size,' + '.join(s['name'] for s in chosen)[:200],chosen[0]['purpose']);self.changed([s for s in d.spaces if s['id'] not in ids]+[s],'space_merge',s['id'])
         except Exception as e:self.owner.error(e)
     def delete(self):
-        d=self.owner.doc;ids=self.selected_ids() or {d.active_space_id};self.changed([s for s in d.spaces if s['id'] not in ids],'space_delete')
+        d=self.owner.doc;ids=self.selected_ids() or {d.active_space_id}
+        if hasattr(self.owner,'space_tools'):self.owner.space_tools.delete(ids=ids-{None})
+        else:self.changed([s for s in d.spaces if s['id'] not in ids],'space_delete')
     def edit_bounds(self,b,mode):
         d=self.owner.doc;s=d.active_space()
         if s is None:self.status.setText('편집할 공간을 먼저 선택하세요.');return
@@ -293,15 +296,9 @@ class SpaceManager(QWidget):
             if s['id']==d.active_space_id:s.update(name=self.name.text().strip() or '공간',purpose=self.purpose.text().strip() or '미지정',color=self.space_color,opacity=self.opacity.value())
         self.changed(spaces,'space_properties',d.active_space_id)
     def visibility_changed(self,item):
-        if self.restoring:return
-        d=self.owner.doc;spaces=copy.deepcopy(d.spaces);sid=item.data(Qt.ItemDataRole.UserRole)
-        for s in spaces:
-            if s['id']==sid:s['visible']=item.checkState()==Qt.CheckState.Checked
-        self.changed(spaces,'space_visibility',d.active_space_id)
+        if not self.restoring and hasattr(self.owner,'space_tools'):self.owner.space_tools.visibility({item.data(Qt.ItemDataRole.UserRole)},item.checkState()==Qt.CheckState.Checked)
     def show_all(self,value):
-        d=self.owner.doc;spaces=copy.deepcopy(d.spaces)
-        for s in spaces:s['visible']=value
-        self.changed(spaces,'space_visibility',d.active_space_id)
+        if hasattr(self.owner,'space_tools'):self.owner.space_tools.visibility({s['id'] for s in self.owner.doc.spaces},value)
     def display(self,*_):
         if self.restoring:return
         if hasattr(self.owner,'ai_panel'):
