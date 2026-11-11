@@ -6,7 +6,7 @@ from pathlib import Path
 HARNESS=r'''
 import sys,os,json,time,importlib.util
 from pathlib import Path
-root=Path(sys.argv[1]);out=Path(sys.argv[2]);forbidden=Path(sys.argv[3]);os.environ['QT_QPA_PLATFORM']='offscreen';os.environ['SHIP_ARCHITECT_DATA_DIR']=str(root/'user_data')
+root=Path(sys.argv[1]).resolve();out=Path(sys.argv[2]);forbidden=Path(sys.argv[3]).resolve();os.environ['QT_QPA_PLATFORM']='offscreen';os.environ['SHIP_ARCHITECT_DATA_DIR']=str(root/'user_data')
 spec=importlib.util.spec_from_file_location('isolated_launcher',root/'launch.py');launch=importlib.util.module_from_spec(spec);spec.loader.exec_module(launch)
 packages=launch.prepare(root/'requirements.txt',Path(os.environ['LOCALAPPDATA'])/'ShipArchitect/packages');sys.path.insert(0,str(packages));sys.path.insert(0,str(root/'src'))
 import numpy as np
@@ -29,7 +29,8 @@ QMessageBox.question=lambda *a,**k:QMessageBox.StandardButton.Yes;QMessageBox.in
 diag=root/'user_data'/'independent_diagnostic.zip';QFileDialog.getSaveFileName=lambda *a,**k:(str(diag),'ZIP (*.zip)');w.export_diagnostics();wait_for(ready);assert diag.exists()
 for name,module in tuple(sys.modules.items()):
  if name.startswith('ship_architect') and getattr(module,'__file__',None):
-  path=Path(module.__file__).resolve();assert path.is_relative_to(root/'src') and not path.is_relative_to(forbidden)
+  path=Path(module.__file__).resolve()
+  assert path.is_relative_to(root/'src') and not path.is_relative_to(forbidden), (name,str(path),str(root/'src'))
 assert not errors,errors
 result={'startup':True,'new_project':True,'real_3d_frame':w.view.frame is not None,'builtin_registry_resource':True,'manual_placement':9,'project_roundtrip':True,'schem_blocks_NBT_roundtrip':True,'schem_GUI_reload':True,'diagnostic_UI_export':True,'isolated_python':True,'clean_private_dependencies':True,'original_source_imports':False,'Windows_direct':sys.platform=='win32'}
 w.doc.dirty=False;w.close();wait_for(lambda:not w.isVisible());out.write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))

@@ -15,7 +15,10 @@ def build(destination):
         for p in files:
             info=zipfile.ZipInfo('ShipArchitect/'+p.relative_to(ROOT).as_posix(),date_time=(2026,11,10,0,0,0));info.external_attr=0o644<<16
             data=p.read_bytes()
-            if p.suffix in ('.cmd','.ps1'):data=data.replace(b'\r\n',b'\n').replace(b'\n',b'\r\n')
+            if p.suffix in ('.cmd','.ps1'):
+                data=data.replace(b'\r\n',b'\n').replace(b'\n',b'\r\n')
+            elif p.suffix in ('.py','.json','.md','.txt','.svg','.qss'):
+                data=data.replace(b'\r\n',b'\n')
             z.writestr(info,data,compress_type=zipfile.ZIP_DEFLATED,compresslevel=7)
     with zipfile.ZipFile(destination) as z:
         assert z.testzip() is None and len(z.namelist())==len(set(z.namelist()))
