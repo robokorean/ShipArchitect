@@ -2,7 +2,8 @@ import os,json,threading
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import numpy as np
 import pytest
-from PySide6.QtCore import QEventLoop,QTimer
+from PySide6.QtCore import QEvent,QEventLoop,QPointF,QTimer,Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 from ship_architect.app import MainWindow
 from ship_architect.ai_design import generate_design
@@ -20,6 +21,17 @@ def wait_for(predicate,seconds=15):
             if hasattr(value,'view') and hasattr(value,'ai_panel'):
                 print('GUI_WAIT_STATE',{'mesh_busy':value.view.mesh_busy,'render_busy':value.view.render_busy,'mesh_worker':value.view.mesh_worker is not None,'render_worker':value.view.render_worker is not None,'timer':value.view.render_timer.isActive(),'probe':value.ai_panel.probe_job is not None,'operation':value.operation is not None})
     assert predicate(),'AI GUI timeout'
+
+
+def left_mouse(view, event_type, position, modifiers=Qt.KeyboardModifier.NoModifier):
+    """Deliver explicit button state without relying on native cursor routing."""
+    position = QPointF(position)
+    left = Qt.MouseButton.LeftButton
+    none = Qt.MouseButton.NoButton
+    button = none if event_type == QEvent.Type.MouseMove else left
+    buttons = none if event_type == QEvent.Type.MouseButtonRelease else left
+    event = QMouseEvent(event_type, position, position, button, buttons, modifiers)
+    QApplication.sendEvent(view, event)
 
 
 def ready(w):return not w.view.workers_running() and not w.view.render_timer.isActive() and w.operation is None

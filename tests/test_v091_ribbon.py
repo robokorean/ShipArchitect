@@ -81,7 +81,7 @@ def test_ribbon_analysis_and_model_path_are_connected(window):
 
 
 def test_ribbon_preferences_restore_and_group_recovery(window):
- w=window;ui=w.integrated_ui;category(w,'공간');key='공간 · 가져오기';action=next(a for a in w.workbench.toolmenu.actions() if a.text()==key);action.setChecked(False);ui.save();saved=json.loads(ui.path.read_text());assert saved['category']==1 and key in saved['hidden_groups']
+ w=window;ui=w.integrated_ui;category(w,'공간');key='공간 · 가져오기';action=next(a for a in w.workbench.toolmenu.actions() if a.text()==key);action.setChecked(False);ui.save();saved=json.loads(ui.path.read_text(encoding='utf-8'));assert saved['category']==1 and key in saved['hidden_groups']
  action.setChecked(True);ui.path.write_text(json.dumps(saved));ui.restore();assert ui.groups[key].isHidden()
  ui.restore_groups();assert not ui.groups[key].isHidden()
  w.workbench.save();assert (w.data_dir/'workspace091.json').exists()

@@ -2,9 +2,10 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QEvent, QPoint
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from test_ai_gui import left_mouse,wait_for,ready
 from ship_architect.app import MainWindow
 from ship_architect.model import Bounds, Document
 from ship_architect.schematic import Schematic
@@ -72,8 +73,7 @@ def test_3d_pick_rotation_zoom_and_clip(window, app):
     d = Document(Schematic.empty(4, 4, 4))
     d.schematic.blocks[:] = 1
     w.set_document(d)
-    QTest.qWait(35)
-    app.processEvents()
+    wait_for(lambda: ready(w) and bool(w.view.hits), seconds=30)
     assert len(w.view.mesh) == 6 and w.view.hits
     polygon, quad, normal = w.view.hits[-1]
     point = polygon.boundingRect().center()
@@ -82,9 +82,9 @@ def test_3d_pick_rotation_zoom_and_clip(window, app):
     axis = int(np.argmax(np.abs(normal)))
     assert xyz[axis] == (3 if normal[axis] > 0 else 0)
     initial = w.view.yaw
-    QTest.mousePress(w.view, Qt.MouseButton.LeftButton, pos=QPoint(250, 220))
-    QTest.mouseMove(w.view, QPoint(310, 250))
-    QTest.mouseRelease(w.view, Qt.MouseButton.LeftButton, pos=QPoint(310, 250))
+    left_mouse(w.view,QEvent.Type.MouseButtonPress,QPoint(250,220))
+    left_mouse(w.view,QEvent.Type.MouseMove,QPoint(310,250))
+    left_mouse(w.view,QEvent.Type.MouseButtonRelease,QPoint(310,250))
     assert w.view.yaw != initial
     from PySide6.QtGui import QWheelEvent
     from PySide6.QtCore import QPointF
@@ -199,8 +199,7 @@ def test_3d_shift_click_two_corners(window, app):
     d = Document(Schematic.empty(4, 4, 4))
     d.schematic.blocks[:] = 1
     window.set_document(d)
-    QTest.qWait(35)
-    app.processEvents()
+    wait_for(lambda: ready(window) and bool(window.view.hits), seconds=30)
     polygon, quad, normal = window.view.hits[-1]
     screen = window.view.project([quad.mean(axis=0)])[0]
     point = QPoint(round(screen[0]), round(screen[1]))
@@ -237,8 +236,8 @@ def test_camera_horizontal_direction_and_persisted_inversion(window,app):
 
 
 def test_finished_but_undelivered_mesh_job_keeps_latest_request(window,app):
-    import time
     w=window
+    wait_for(lambda: ready(w), seconds=30)
     d=Document(Schematic.empty(64,40,48))
     d.schematic.blocks[:]=1
     w.set_document(d)
@@ -249,10 +248,7 @@ def test_finished_but_undelivered_mesh_job_keeps_latest_request(window,app):
     w.view.cut=True;w.view.layer=2
     w.view.rebuild()
     assert w.view.mesh_worker is first  # must not overwrite the pending worker
-    deadline=time.perf_counter()+10
-    while w.view.workers_running() or w.view.render_timer.isActive():
-        app.processEvents();QTest.qWait(5)
-        assert time.perf_counter()<deadline
+    wait_for(lambda: ready(w), seconds=30)
     assert w.view.frame is not None
     assert max(float(q[:,1].max()) for q,n,i in w.view.mesh)==3
 

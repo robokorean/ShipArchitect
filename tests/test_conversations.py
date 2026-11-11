@@ -13,8 +13,8 @@ def test_project_isolation_restart_search_export_and_diff(tmp_path):
  other=Document(Schematic.empty(6,4,6));assert not s.entries(other.project_id)
  reopened=ConversationStore(path);assert reopened.entries(d.project_id,'유리')[0]['prompt']=='유리 바닥'
  for kind in ('txt','json'):
-  output=tmp_path/('chat.'+kind);s.export(d.project_id,output,kind);assert '유리 바닥' in output.read_text()
- data=json.loads((tmp_path/'chat.json').read_text());blob=data['entries'][0]['change_map_npz_base64']
+  output=tmp_path/('chat.'+kind);s.export(d.project_id,output,kind);assert '유리 바닥' in output.read_text(encoding='utf-8')
+ data=json.loads((tmp_path/'chat.json').read_text(encoding='utf-8'));blob=data['entries'][0]['change_map_npz_base64']
  with np.load(io.BytesIO(base64.b64decode(blob)),allow_pickle=False) as arrays:assert len(arrays['indices'])==36 and set(arrays['after'])=={4}
 
 

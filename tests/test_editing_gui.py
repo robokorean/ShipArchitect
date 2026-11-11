@@ -2,9 +2,10 @@ import os,time
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt,QPoint,QEventLoop,QTimer
+from PySide6.QtCore import Qt,QEvent,QPoint,QEventLoop,QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication,QMessageBox
+from test_ai_gui import left_mouse,wait_for
 from ship_architect.app import MainWindow
 from ship_architect.model import Document,Bounds
 from ship_architect.schematic import Schematic
@@ -32,12 +33,13 @@ def w():
 
 def test_real_3d_drag_selects_air_and_preserves_camera(w):
     w.select_mode.setCurrentIndex(1)
+    wait_for(lambda: w.view.pick_buffer is not None, seconds=30)
     yaw=w.view.yaw
     screen=w.view.project([[2.5,0,3.5],[8.5,0,10.5]])
     a,b=(QPoint(round(x),round(y)) for x,y in screen)
-    QTest.mousePress(w.view,Qt.MouseButton.LeftButton,pos=a)
-    QTest.mouseMove(w.view,b)
-    QTest.mouseRelease(w.view,Qt.MouseButton.LeftButton,pos=b)
+    left_mouse(w.view,QEvent.Type.MouseButtonPress,a)
+    left_mouse(w.view,QEvent.Type.MouseMove,b)
+    left_mouse(w.view,QEvent.Type.MouseButtonRelease,b)
     assert w.doc.selection==Bounds((2,0,3),(8,0,10))
     assert w.view.yaw==yaw
     assert 'X 8 / Y 0 / Z 10' in w.inspect.text()

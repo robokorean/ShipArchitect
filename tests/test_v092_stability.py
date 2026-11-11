@@ -1,9 +1,9 @@
 import json,gzip,zipfile,copy,time
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt,QPointF
+from PySide6.QtCore import Qt,QEvent,QPointF
 from PySide6.QtTest import QTest
-from test_ai_gui import window,ready,wait_for
+from test_ai_gui import window,ready,wait_for,left_mouse
 from test_v09_gui import build_demo
 from ship_architect.model import Document,Bounds
 from ship_architect.schematic import Schematic,load_file
@@ -70,10 +70,18 @@ def test_hidden_local_chunk_reuses_unaffected_meshes():
 def test_full_mesh_frames_keep_geometry_and_overlay_toggles_do_not_clear_frame(window):
  w=window;w.set_document(build_demo());wait_for(lambda:ready(w));w.workbench.open_tab(w.view);v=w.view;scene=v.mesh;frame=v.frame;serial=v.mesh_serial
  w.space_manager.overlays.setChecked(False);w.space_manager.overlays.setChecked(True);v.rebuild();assert v.mesh is scene and v.frame is not None and v.mesh_serial==serial
- rendered=v.interaction_renders;QTest.mousePress(v,Qt.MouseButton.LeftButton,pos=v.rect().center())
- for i in range(35):move(v,50+i*4,140+i);QTest.qWait(15);assert v.frame is not None and v.mesh is scene
- assert v.interaction_renders>rendered+1 and v.render_stats['scene_faces']==len(scene) and v.pick(QPointF(100,100)) is None
- QTest.mouseRelease(v,Qt.MouseButton.LeftButton,pos=v.rect().center());wait_for(lambda:ready(w));assert v.pick_buffer is not None
+ rendered=v.interaction_renders
+ center=QPointF(v.rect().center())
+ left_mouse(v,QEvent.Type.MouseButtonPress,center)
+ for step in (1,2):
+  position=center+QPointF(step*25,step*10)
+  left_mouse(v,QEvent.Type.MouseMove,position)
+  wait_for(lambda: v.interaction_renders>=rendered+step, seconds=30)
+  assert v.frame is not None and v.mesh is scene
+ assert v.render_stats['scene_faces']==len(scene) and v.pick(QPointF(100,100)) is None
+ left_mouse(v,QEvent.Type.MouseButtonRelease,position)
+ wait_for(lambda:ready(w),seconds=30)
+ assert v.pick_buffer is not None
 
 
 def test_analysis_tabs_share_right_area_and_preserve_data(window):
