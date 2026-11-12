@@ -10,6 +10,13 @@ from .diagnostics import event
 
 REASONS={'exterior_envelope_unresolved':'외부 외형·큰 미분리 영역 (기본 숨김)','large_merge_reanalysed':'대형 연결 후보 재분할·검토','possible_merged_space':'여러 공간 합쳐짐 가능·미해결','virtual_exterior_opening':'외부 연결·가상 개구 경계','virtual_room_partition':'가상 방 분리·통행 별도 검토','source_collision_repaired':'원본 충돌 셀 제외·검토','mesh_volume_mismatch':'메시/복셀 부피 불일치','mesh_budget_exceeded':'정밀 메시 표시 예산 초과','narrow_opening_partition':'좁은 개구부 분할 추정·수동 검토','analysis_limit':'분석 한도 초과','scope_or_exterior_open':'선택 경계·외부와 연결','ceiling_slit_no_headroom':'천장 틈·머리 공간 부족','no_usable_floor':'사용 가능한 바닥 부족','narrow_wall_gap_or_corridor':'좁은 벽 틈·통로 구분 필요','uncertain_block_boundary':'불확실한 블록 경계','closed_supported_volume':'닫힌 부피·지지 바닥 확인','existing_space_overlap_protected':'기존 공간과 겹침·보호','user_boundary_crop':'사용자 경계 보정','protected_user_decision':'사용자 판단 보호','user_exclusion_rule':'사용자 제외 규칙'}
 
+CLASS_NAMES = {
+    'closed_interior':'폐쇄형 내부', 'open_interior':'개방형 내부 후보',
+    'hangar_or_large_opening':'넓은 개구부 후보', 'exposed_deck':'노출 갑판 후보',
+    'exterior_air':'외부 공기', 'unresolved_exterior_merge':'미해결 외부 연결', 'uncertain':'불확실',
+}
+REASONS.update(wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
+
 class SpatialBatch:
     def __init__(self,panel):
         self.panel=panel;self.owner=panel.owner;self.result=None
@@ -24,10 +31,10 @@ class SpatialBatch:
         self.recognition=RecognitionTools(self)
     def selected(self):
         ids={i.data(Qt.ItemDataRole.UserRole) for i in self.panel.list.selectedItems()};return [c for c in self.owner.doc.space_candidates if c['id'] in ids]
-    def scan(self,auto=False,partial=False,whole=False):
+    def scan(self,auto=False,partial=False,whole=False,scope=None):
         w=self.owner;d=w.doc
         if w.operation is not None or w.loading:return
-        b=partial_bounds(d) if partial else Bounds((0,0,0),tuple(n-1 for n in d.schematic.size)) if whole else d.selection
+        b=scope or (partial_bounds(d) if partial else Bounds((0,0,0),tuple(n-1 for n in d.schematic.size)) if whole else d.selection)
         if b is None:self.panel.status.setText('변경 블록이 없습니다. 전체/선택 분석을 먼저 실행하세요.');return
         state=copy.deepcopy(d.analysis_state);revision=d.revision;engine=self.recognition.engine() if self.recognition.mode.currentIndex()==1 else recognize_3d
         def work(progress,cancel):
@@ -68,7 +75,9 @@ class SpatialBatch:
             if c.get('method') not in ('3d_air_components','exterior_voxel_mesh'):continue
             if wanted and c['decision']!=wanted:continue
             if wanted_reason and wanted_reason not in c['reasons']:continue
-            item=QListWidgetItem(f"{dict(auto='자동 등록 가능',review='검토 필요',exclude='제외',registered='등록됨')[c['decision']]} · {c.get('volume',0):,}셀 · Y={c['lo'][1]}~{c['hi'][1]} · {', '.join(REASONS.get(r,r) for r in c['reasons'])}");item.setData(Qt.ItemDataRole.UserRole,c['id']);item.setToolTip(item.text());p.list.addItem(item)
+            structure=CLASS_NAMES.get(c.get('structure_class'))
+            label=f'{structure} · ' if structure else ''
+            item=QListWidgetItem(f"{label}{dict(auto='자동 등록 가능',review='검토 필요',exclude='제외',registered='등록됨')[c['decision']]} · {c.get('volume',0):,}셀 · Y={c['lo'][1]}~{c['hi'][1]} · {', '.join(REASONS.get(r,r) for r in c['reasons'])}");item.setData(Qt.ItemDataRole.UserRole,c['id']);item.setToolTip(item.text());p.list.addItem(item)
             if c['id'] in selected:item.setSelected(True)
         p.list.blockSignals(False)
         if p.list.count() and not p.list.selectedItems():p.list.setCurrentRow(0)
@@ -131,7 +140,7 @@ class SpatialBatch:
             record['zones_after']=copy.deepcopy(d.zones);self.result=r;self.refresh();w.space_manager.refresh();w.refresh_zones();w.refresh_history();self.panel.status.setText(f'정확한 3D 공간 {len(added)}개 등록. 기존 겹치는 공간은 보호합니다.')
         except Exception as e:self.owner.error(e)
     def clear_compare(self):
-        self.owner.view.validation_spaces=[];self.owner.view.update()
+        self.owner.view.validation_spaces=[];self.owner.view.partition_faces=[];self.owner.view.update();self.owner.space_manager.plan.update()
     def compare(self):
         chosen=self.selected()
         if not chosen:return

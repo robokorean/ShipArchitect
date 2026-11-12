@@ -17,7 +17,7 @@ import traceback
 import uuid
 import zipfile
 
-APP_VERSION = '0.9.3.2'
+APP_VERSION = '0.9.3.3'
 MAX_LOG_BYTES = 5 * 1024 * 1024
 ROTATIONS = 3
 _lock = threading.RLock()
@@ -162,7 +162,7 @@ def report(destination, *, document=None, ui_state=None):
                 z.writestr('analysis_summary.json',json.dumps({'block_epoch':getattr(document,'block_epoch',0),'equipment_rules':len(state.get('equipment_rules',{})),'space_rules':len(state.get('space_rules',[])),'decisions':len(state.get('decisions',{})),'last_result':{k:v for k,v in state.get('last_result',{}).items() if k not in ('candidates','shell_face_runs')}},ensure_ascii=False))
                 comparison=state.get('comparison')
                 if comparison:
-                    z.writestr('recognition_comparison.json',json.dumps(_clean({'scope':comparison['scope'],'matches':comparison['matches'],'old':{k:v for k,v in comparison['old'].items() if k not in ('candidates','shell_face_runs')},'new':{k:v for k,v in comparison['new'].items() if k not in ('candidates','shell_face_runs')} }),ensure_ascii=False,indent=2))
+                    z.writestr('recognition_comparison.json',json.dumps(_clean({'scope':comparison['scope'],'matches':comparison['matches'],'old_only_ids':comparison.get('old_only_ids',[]),'new_only_ids':comparison.get('new_only_ids',[]),'old':{k:v for k,v in comparison['old'].items() if k not in ('candidates','shell_face_runs')},'new':{k:v for k,v in comparison['new'].items() if k not in ('candidates','shell_face_runs')} }),ensure_ascii=False,indent=2))
                 with z.open('analysis_rules.jsonl','w') as fd:
                     for key,value in state.get('equipment_rules',{}).items():fd.write((json.dumps(_clean({'type':'equipment','id':key,'category':value}),ensure_ascii=False)+'\n').encode())
                     for rule in state.get('space_rules',[]):fd.write((json.dumps(_clean({'type':'space','rule':rule}),ensure_ascii=False)+'\n').encode())

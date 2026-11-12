@@ -20,6 +20,9 @@ def validate(value,size):
     for entry in state['decisions'].values():
         if entry.get('action') not in ('exclude','review','crop','registered'):raise ValueError('검토 판단 오류')
         if 'runs' in entry:entry['runs']=normalize(entry['runs'],size)
+    rejected=state.get('partition_rejections',[])
+    if not isinstance(rejected,list) or len(rejected)>2048 or any(not isinstance(k,str) or not re.fullmatch(r'[a-f0-9]{64}:[a-f0-9]{64}',k) for k in rejected):
+        raise ValueError('병합 거부 기록 형식 오류')
     last=state.get('last_result')
     if last is not None:
         if last.get('method') not in METHODS or len(last.get('candidates',[]))>512:raise ValueError('3D 분석 복원 오류')
@@ -86,7 +89,7 @@ def register(doc,result,automatic=True,ids=None):
     for c in candidates:
         if ids is not None and c['id'] not in ids:continue
         if c.get('decision')=='registered':continue
-        if c.get('space_class')=='exterior_or_merged':
+        if c.get('space_class') in ('exterior_or_merged','exterior_air'):
             if automatic:continue
             raise ValueError('외부 공기/큰 미분리 후보는 방으로 등록하지 않습니다. 작은 경계로 보정하거나 재분석하세요.')
         if automatic and c['decision']!='auto':continue

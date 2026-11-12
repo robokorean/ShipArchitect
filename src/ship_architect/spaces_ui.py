@@ -37,7 +37,9 @@ class SpaceView(QWidget):
         c=self.current()
         if c:self.text.setPlainText(json.dumps({k:v for k,v in c.items() if k not in ('volume_runs','footprint')}|{'footprint_rows':len(c.get('footprint',[])),'exact_volume_runs':len(c.get('volume_runs',[]))},ensure_ascii=False,indent=2));self.show_overlay()
     def show_overlay(self,*_):
+        self.owner.view.partition_faces=[]
         self.owner.view.candidate_boxes=([self.current()] if self.current() is not None else []) if self.overlay.isChecked() else [];self.owner.view.update()
+        if hasattr(self.owner,'space_manager'):self.owner.space_manager.plan.update()
     def select(self):
         if self.owner.doc.space_revision!=self.owner.doc.revision:self.status.setText('문서가 바뀌었습니다. 공간 후보를 다시 분석하세요.');return
         c=self.current()

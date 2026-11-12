@@ -25,4 +25,4 @@ def build(destination):
         assert not any('/'+name+'/' in n for n in z.namelist() for name in ('tests','tools','docs','legacy','private_dev','examples'))
     result={'filename':destination.name,'bytes':destination.stat().st_size,'files':len(files),'sha256':hashlib.sha256(destination.read_bytes()).hexdigest()};print(json.dumps(result));return result
 if __name__=='__main__':
-    a=argparse.ArgumentParser();a.add_argument('--output',type=Path,default=ROOT/'dist/ShipArchitect_v0.9.3.2.zip');args=a.parse_args();build(args.output)
+    a=argparse.ArgumentParser();a.add_argument('--output',type=Path,default=ROOT/'dist/ShipArchitect_v0.9.3.3.zip');args=a.parse_args();build(args.output)

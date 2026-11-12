@@ -12,6 +12,7 @@ from .spatial3d import next_seed,flood_step,fingerprint,MAX_VOLUME
 from .space_model import bbox
 from .diagnostics import evidence
 from .voxel_mesh import indexed_mesh,summary,validate_boundary
+from .exterior_structure import ALGORITHM_VERSION, terrain_mask, repair_partitions, exposure_class
 METHOD='exterior_voxel_mesh'
 
 @njit(cache=True,nogil=True)
@@ -38,7 +39,7 @@ def components(allowed,queue,cancel,progress=None):
         start=seed+1
     return labels,k
 
-def scan(doc,bounds,progress=None,cancel=None,partial=False):
+def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True):
     started=time.perf_counter();bounds.validate(doc.schematic.size)
     if bounds.volume>MAX_VOLUME:raise ValueError('외관 기반 분석도 한 번에 800만 셀 이하로 선택하세요.')
     sc=doc.schematic;x0,y0,z0=bounds.lo;X,Y,Z=bounds.hi;H,L,W=Y-y0+1,Z-z0+1,X-x0+1
@@ -48,19 +49,28 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
         checkpoint(cancel);a,b,c=lo;A,B,C=hi;solid[b-y0:B-y0,c-z0:C-z0,a-x0:A-x0]=sc.solid(sc.blocks[slices(lo,hi)])
         if progress and i%16==0:progress(int(10*i/max(1,len(boxes))),'원본 점유 상태 청크 분석')
     air=~solid;queue=np.empty(air.size,np.int32)
+    source_blocks=sc.blocks[y0:Y+1,z0:Z+1,x0:X+1]
+    terrain=np.zeros_like(solid)
+    terrain_info={'ignored_cells':0,'components':[],'rule':'disabled'}
+    if ignore_terrain:
+        if progress:progress(10,'함선과 바닥 지형 분리')
+        terrain,terrain_info=terrain_mask(source_blocks,sc.palette,bounds,sc.size,queue,components,cancel)
+    hull=solid&~terrain
+    # Exterior can reach through the ignored soil mask. Candidate cells still use physical air.
+    passable=~hull
     # One exterior flood with every boundary air cell as a seed.
     exterior=np.zeros(air.shape,np.int32);seed=np.zeros(air.shape,bool)
-    seed[0]=seed[-1]=True;seed[:,0]=seed[:,-1]=True;seed[:,:,0]=seed[:,:,-1]=True;seed &= air
+    seed[0]=seed[-1]=True;seed[:,0]=seed[:,-1]=True;seed[:,:,0]=seed[:,:,-1]=True;seed &= passable
     points=np.flatnonzero(seed.ravel());tail=len(points);queue[:tail]=points;exterior.ravel()[points]=1;head=0
     while head<tail:
-        checkpoint(cancel);head,tail=flood_step(air.ravel(),exterior.ravel(),queue,head,tail,1,W,L,H)
+        checkpoint(cancel);head,tail=flood_step(passable.ravel(),exterior.ravel(),queue,head,tail,1,W,L,H)
         if progress:progress(10+int(15*head/max(1,air.size)),'외부 공기·외벽 접근성 탐색')
-    raw_exterior=exterior>0;del exterior,seed,points
+    raw_exterior=(exterior>0)&air;del exterior,seed,points,passable
     # Exterior-facing occupied unit faces: auditable shell, not inferred hull edits.
     shell_faces=Counter();shell_runs=[];shell_runs_omitted=0
     for axis in range(3):
         for sign in (-1,1):
-            exposed=solid&shift(raw_exterior,axis,sign,True);shell_faces[f'{axis}:{sign}']=int(exposed.sum())
+            exposed=hull&shift(raw_exterior|terrain,axis,sign,True);shell_faces[f'{axis}:{sign}']=int(exposed.sum())
             for y in range(H):
                 checkpoint(cancel)
                 for z in range(L):
@@ -73,7 +83,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
     # permit an open hangar hypothesis. Three pairs alone are not proof of a room.
     votes=np.zeros(air.shape,np.uint8);vertical=None
     for axis in range(3):
-        checkpoint(cancel);before=np.maximum.accumulate(solid,axis=axis);after=np.flip(np.maximum.accumulate(np.flip(solid,axis=axis),axis=axis),axis=axis);inside=before&after&air
+        checkpoint(cancel);before=np.maximum.accumulate(hull,axis=axis);after=np.flip(np.maximum.accumulate(np.flip(hull,axis=axis),axis=axis),axis=axis);inside=before&after&air
         votes+=inside
         if axis==0:vertical=inside.copy()
     domain=air&((~raw_exterior)|(vertical&(votes>=2)))
@@ -124,6 +134,15 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
         reanalyses.append(entry)
         del mask,local,core2,queue2,seeds,previous
         if progress:progress(49,'대형 외부 연결 후보 재분석·가상 경계 검토')
+    partition_decisions=[]
+    if repair:
+        if progress:progress(50,'공유 공기면과 바닥·천장으로 인위적 분할 확인')
+        state=getattr(doc,'analysis_state',{})
+        protected=set(state.get('decisions',{}))
+        protected.update(s.get('recognition',{}).get('source_fingerprint') for s in doc.spaces)
+        labels,partition_decisions=repair_partitions(
+            labels,hull,source_blocks,sc.palette,bounds,protected,
+            set(state.get('partition_rejections',[])),cancel)
     # Sparse exact cells, counters and virtual boundaries; no per-voxel Python objects.
     runs=defaultdict(list);run_count=0;counts=Counter();raw_counts=Counter();feet=Counter();heads=Counter();patches=Counter();virtual=Counter();pairs=Counter();interfaces=[];unknown=set();surface_samples=[]
     known={i for i,s in sc.palette.items() if s.startswith('minecraft:') and not any(t in s for t in ('stairs','slab','fence','pane','door','trapdoor','water','lava','carpet','snow','leaves'))}
@@ -131,7 +150,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
         checkpoint(cancel);row=labels[y];ids,num=np.unique(row[row>0],return_counts=True);counts.update(dict(zip(map(int,ids),map(int,num))));ids,num=np.unique(row[raw_exterior[y]&(row>0)],return_counts=True);raw_counts.update(dict(zip(map(int,ids),map(int,num))))
         if y+1<H:
             ids,num=np.unique(row[(row>0)&(row==labels[y+1])],return_counts=True);heads.update(dict(zip(map(int,ids),map(int,num))))
-            below=solid[y-1] if y>0 else sc.solid(sc.blocks[y0-1,z0:Z+1,x0:X+1]) if y0>0 else np.zeros((L,W),bool)
+            below=hull[y-1] if y>0 else sc.solid(sc.blocks[y0-1,z0:Z+1,x0:X+1]) if y0>0 else np.zeros((L,W),bool)
             mask=(row>0)&below&(row==labels[y+1]);ids,num=np.unique(row[mask],return_counts=True);feet.update(dict(zip(map(int,ids),map(int,num))))
             sq=mask[:-1,:-1]&mask[1:,:-1]&mask[:-1,1:]&mask[1:,1:]&(row[:-1,:-1]==row[1:,1:]);patches.update(map(int,np.unique(row[:-1,:-1][sq])))
         for z in range(L):
@@ -142,11 +161,44 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
                     if run_count>=500000:raise ValueError('외관 후보 전체 50만 runs 한도. 범위를 나누세요.')
                     runs[ident].append([y+y0,z+z0,int(a)+x0,int(b-1)+x0]);run_count+=1
         if progress:progress(50+int(15*y/max(1,H)),'정확한 3D 셀·바닥·머리 공간 검증')
-    # Chunk-sized planes and halo comparisons bound transient memory.
+    faces=defaultdict(Counter)
+    openings=defaultdict(list)
+    def add_faces(field,mask):
+        ids,num=np.unique(labels[mask],return_counts=True)
+        for ident,n in zip(ids,num):
+            faces[int(ident)][field]+=int(n)
+
+    # Compare actual hull contact, other candidates and exterior boundaries separately.
     for axis in range(3):
         for sign in (-1,1):
             checkpoint(cancel);near=shift(labels,axis,sign);boundary=(labels>0)&(near!=labels);air_near=shift(air,axis,sign,True);cut=boundary&air_near
             ids,num=np.unique(labels[cut],return_counts=True);virtual.update(dict(zip(map(int,ids),map(int,num))))
+            near_hull=shift(hull,axis,sign)
+            near_terrain=shift(terrain,axis,sign)
+            add_faces('hull',boundary&near_hull)
+            add_faces('terrain',boundary&near_terrain)
+            add_faces('air',cut)
+            outside=cut&(near==0)
+            if axis==0:
+                add_faces('roof' if sign==-1 else 'floor',boundary&near_hull)
+                add_faces('top_boundary' if sign==-1 else 'bottom_boundary',boundary)
+            else:
+                add_faces('open_side',outside)
+                add_faces('other_label_side',cut&(near>0))
+            points=np.argwhere(outside)
+            if len(points):
+                keys=labels[tuple(points.T)]
+                order=np.argsort(keys,kind='stable')
+                keys,points=keys[order],points[order]
+                changes=np.r_[0,np.flatnonzero(keys[1:]!=keys[:-1])+1,len(keys)]
+                for start,end in zip(changes[:-1],changes[1:]):
+                    group=points[start:end][:,[2,0,1]]+np.asarray(bounds.lo)
+                    openings[int(keys[start])].append({
+                        'axis_yzx':axis,'sign':-sign,'lo':group.min(0).tolist(),
+                        'hi':group.max(0).tolist(),'unit_faces':int(end-start),
+                        'sample_xyz':group[::max(1,(len(group)+15)//16)].tolist(),
+                        'reason':'outer silhouette or selection limit; virtual, possibly nonplanar',
+                    })
             if sign==1:
                 between=cut&(near>0);left=labels[between];right=near[between]
                 if len(left):
@@ -168,6 +220,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
         checkpoint(cancel);rr=runs[ident];lo,hi=bbox({'runs':rr});volume=counts[ident];touch=any(lo[i]==bounds.lo[i] or hi[i]==bounds.hi[i] for i in range(3));checks={'closed_within_scope':not touch,'two_cell_clearance':heads[ident]>0,'usable_floor':feet[ident]>=9,'wide_floor_patch':patches[ident]>0,'known_boundary_geometry':ident not in unknown,'complete_component':True,'original_connected_component':raw_counts[ident]==0 and virtual[ident]==0}
         reasons=[]
         if raw_counts[ident]:reasons.append('virtual_exterior_opening')
+        if any(q['merged'] and q['result_labels'][0]==ident for q in partition_decisions):reasons.append('wide_partition_repaired')
         if virtual[ident]:reasons.append('virtual_room_partition')
         if ident in refined_labels:reasons.append('large_merge_reanalysed')
         if volume>50000 and raw_counts[ident]:reasons.append('possible_merged_space')
@@ -197,11 +250,29 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
         decision='auto' if auto else 'review'
         if not checks['two_cell_clearance'] or feet[ident]<3:decision='exclude'
         fp=fingerprint(rr);c=dict(id='EXT-'+fp[:12],fingerprint=fp,method=METHOD,source_block_epoch=epoch,decision=decision,base_decision=decision,reasons=reasons or ['closed_supported_volume'],checks=checks,kind='corridor' if not patches[ident] else 'room',floor_y=lo[1],area=feet[ident],lo=list(lo),hi=list(hi),volume=volume,volume_runs=rr,footprint=[[z,a,b] for y,z,a,b in rr if y==lo[1]],footprint_truncated=False,wall_ratio=1. if not virtual[ident] else 0.,ceiling_ratio=1. if not raw_counts[ident] else 0.,confirmed=False,shape={'method':'exterior flood + directional envelope + core partition; exact empty voxels'},mesh=mesh_info,validation={'solid_intrusions':collision_count,'repaired_sample_coordinates':collisions,'mesh_volume_matches_voxels':mesh_ok,'mesh_boundary':boundary_check,'domain_missing_cells':0,'semantic_room_split':'uncertain where virtual interfaces exist','reanalysis_index':refined_labels.get(ident)},virtual_boundary={'raw_exterior_cells':raw_counts[ident],'unit_faces':virtual[ident],'label':ident},warnings=reasons)
+        f=faces[ident]
+        c['boundary_contacts']={key:f[key] for key in (
+            'hull','terrain','air','roof','floor','top_boundary','bottom_boundary','open_side','other_label_side')}
+        c['opening_groups']=openings[ident]
+        c['structure_class']=exposure_class(c,f)
+        if c['structure_class'] in ('exterior_air','exposed_deck'):
+            c['reasons'].append('unsupported_exterior' if c['structure_class']=='exterior_air' else 'exposed_deck')
+            if c['structure_class']=='exterior_air':
+                c['decision']=c['base_decision']='exclude'
         candidates.append(c)
         if progress:progress(65+int(30*(number+1)/max(1,min(512,len(ordered)))),'복셀 외곽 메시·원본 대조')
     by_label={c['virtual_boundary']['label']:c['id'] for c in candidates};portals=[]
     for (a,b),area in pairs.items():
         if a in by_label and b in by_label:portals.append({'spaces':[by_label[a],by_label[b]],'unit_faces':area,'kind':'virtual_partition','traversability':'uncertain','reason':'space segmentation is independent of movement connectivity'})
+    neighbours=defaultdict(list)
+    for portal in portals:
+        a,b=portal['spaces']
+        neighbours[a].append({'id':b,'unit_faces':portal['unit_faces']})
+        neighbours[b].append({'id':a,'unit_faces':portal['unit_faces']})
+    for candidate in candidates:
+        candidate['adjacent_spaces']=neighbours[candidate['id']]
+    for item in partition_decisions:
+        item['result_ids']=[by_label.get(i) for i in item['result_labels']]
     # Door/steps are semantic evidence; their actual game collision is not guessed.
     devices=[]
     wanted={i:s for i,s in sc.palette.items() if any(t in s.split('[')[0] for t in ('_door','_trapdoor','_stairs','elevator'))}
@@ -219,7 +290,14 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
             devices.append({'position':pos,'block':state,'spaces':sorted(neighbours),'state_evidence':'open=true' if 'open=true' in state else 'open=false' if 'open=false' in state else 'direction/state only','traversability':'uncertain','reason':'occupancy/semantic evidence; no runtime collision simulation'})
     from .space_classification import classify
     classify(candidates,doc)
-    result={'method':METHOD,'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+    for c in candidates:
+        if c['space_class']=='exterior_or_merged':
+            c['structure_class']='unresolved_exterior_merge'
+        elif c['structure_class'] in ('exterior_air','exposed_deck'):
+            c['space_class']=c['structure_class']
+    for decision in partition_decisions:
+        decision['source_ids']=['EXT-'+f[:12] for f in decision.get('source_fingerprints',[])]
+    result={'method':METHOD,'algorithm_version':ALGORITHM_VERSION,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair},'terrain':terrain_info,'partition_decisions':partition_decisions,'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
     def details():
         for c in candidates:
             yield {'candidate':{k:v for k,v in c.items() if k not in ('volume_runs','footprint')}}
@@ -228,11 +306,12 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False):
         for row in interfaces:yield {'virtual_boundary':row}
         for row in portals:yield {'segmentation_connection':row}
         for row in devices:yield {'semantic_feature':row}
-    result['trace_id']=evidence('exterior_first', {k:v for k,v in result.items() if k not in ('candidates','semantic_features','virtual_boundary_sample','connections','shell_face_runs')},details())
+        for row in partition_decisions:yield {'partition_decision':row}
+    result['trace_id']=evidence('exterior_first', {k:v for k,v in result.items() if k not in ('candidates','semantic_features','virtual_boundary_sample','connections','shell_face_runs','partition_decisions')},details())
     if progress:progress(100,'외관 기반 인식·검증 완료')
     return result
 
-def recognize_exterior(doc,bounds,progress=None,cancel=None,partial=False):
-    try:return scan(doc,bounds,progress,cancel,partial)
+def recognize_exterior(doc,bounds,progress=None,cancel=None,partial=False,**options):
+    try:return scan(doc,bounds,progress,cancel,partial,**options)
     except Exception as e:
         evidence('exterior_failed',{'scope':{'lo':bounds.lo,'hi':bounds.hi},'reason':str(e),'type':type(e).__name__},[{'traceback':traceback.format_exc()}]);raise

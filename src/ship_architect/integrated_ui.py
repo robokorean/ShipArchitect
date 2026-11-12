@@ -21,7 +21,7 @@ class IntegratedUI:
         self.path=owner.data_dir/'ribbon091.json'
         self.configure_drawing();self.configure_properties();self.configure_routes();self.configure_visibility();self.build_ribbon()
         self.b.scene_dock.setWindowTitle('장면 탐색기');self.b.editor_dock.setWindowTitle('속성 편집기')
-        owner.setWindowTitle('Ship Architect v0.9.3.2 · 통합 설계 작업공간')
+        owner.setWindowTitle('Ship Architect v0.9.3.3 · 통합 설계 작업공간')
         # Legacy toolbar actions remain the same QAction objects used by the ribbon.
         for bar in (owner.toolbar,*self.b.modebars):bar.hide()
         self.b.toolmenu.clear();self.b.toolmenu.addAction('리본 그룹 전체 복원',self.restore_groups)

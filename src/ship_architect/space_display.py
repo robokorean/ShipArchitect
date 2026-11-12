@@ -4,7 +4,7 @@ DEFAULTS={'normal_alpha':80,'candidate_alpha':110,'geometry':'mesh','external':F
 
 def config(view):return getattr(view,'space_display',DEFAULTS)
 def external(space,doc):
-    if space.get('space_class')=='exterior_or_merged':return True
+    if space.get('space_class') in ('exterior_or_merged','exterior_air'):return True
     runs=space.get('volume_runs',space.get('runs',[]))
     if not runs:return False
     volume=space['volume'] if 'volume' in space else sum(b-a+1 for _,_,a,b in runs)

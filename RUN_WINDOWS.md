@@ -1,6 +1,6 @@
-# Windows 실행 안내 · v0.9.3.2
+# Windows 실행 안내 · v0.9.3.3
 
-전체 ZIP을 예를 들어 `D:\ShipArchitect_v0.9.3.2`에 풀고 `ShipArchitect\START_WINDOWS.cmd`를 실행하세요. 기존 설치 폴더에 덮어쓰지 않는 것을 권장합니다. 사용자 프로젝트는 별도 폴더에 보관하세요.
+전체 ZIP을 예를 들어 `D:\ShipArchitect_v0.9.3.3`에 풀고 `ShipArchitect\START_WINDOWS.cmd`를 실행하세요. 기존 설치 폴더에 덮어쓰지 않는 것을 권장합니다. 사용자 프로젝트는 별도 폴더에 보관하세요.
 
 64비트 Python 3.12/3.13과 정상적인 pip가 필요합니다. 최초 실행은 설치된 기본 Python으로 개인 패키지 캐시에 PySide6·NumPy·Numba·nbtlib를 설치합니다. 기존 `.venv`나 다른 버전의 Python 실행 파일을 복사할 필요가 없습니다. 백신 설정을 바꾸지 마세요. 시작이 실패하면 `startup.log`를 확인하세요.
 

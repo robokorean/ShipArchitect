@@ -16,3 +16,24 @@ or a live Ollama model. The connection tests use a controlled local HTTP server.
 The complete ship mesh is retained during interaction; complex space fills are
 deferred until release. Exterior recognition remains experimental: ambiguous
 openings and merged components require review rather than automatic registration.
+
+## v0.9.3.3 exterior recognition
+
+The exterior flood and erosion/expansion passes stay in place. Terrain masking
+is analysis-only and requires a broad, thin bottom soil component connected
+to the schematic's lateral edge. Original solid cells are never candidates.
+Proposed partition repairs compare real horizontal air-to-air faces, floor
+and roof levels, aperture dimensions and passage blocks. A protected or
+rejected source fingerprint prevents repair. Competing repairs remain under
+review. Labels are geometry hypotheses rather than game collision or room-use
+ground truth. Coordinate samples and face counts explain the distinction.
+
+Use the existing connectivity method as a control. A large exterior-connected
+multi-deck component can still remain unresolved after the second core pass.
+Partial selections may provide insufficient terrain or opening evidence.
+Private schematics, OBJ exports and coordinate-level comparisons are retained
+outside this repository.
+
+Verification: Linux Qt offscreen passed 460 tests, including 9 new structure
+and UI cases. The release workflow repeats the full suite and the extracted
+distribution check on Windows.

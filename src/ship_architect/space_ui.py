@@ -58,6 +58,19 @@ class SpacePlan(LayerView):
                 if not space_visible(m.owner.view,s,s.get('_candidate',False)) or m.only.isChecked() and s['id']!=self.doc.active_space_id:continue
                 c=QColor(display_color(s));c.setAlpha(space_alpha(m.owner.view,s,s.get('_candidate',False)));p.setBrush(c);p.setPen(QPen(QColor(s['color']),.4))
                 for a,z,b,Z in (overlay_rectangles(s,self.layer,self.doc,self.manager.owner.view) if hasattr(self.manager.owner.view,'display_state') else plane_rectangles(s,self.layer)):p.drawRect(QRectF(self.ox+a*self.scale,self.oz+z*self.scale,(b-a)*self.scale,(Z-z)*self.scale))
+        # Orange lines are sampled air-to-air faces from the old partition.
+        p.setPen(QPen(QColor('#ff9d42'),2))
+        for sample in getattr(m.owner.view,'partition_faces',[]):
+            axis=sample['axis_yzx']
+            if axis==0:continue
+            for x,y,z in sample['positions']:
+                if y!=self.layer:continue
+                if axis==1:
+                    z+=int(sample['sign']>0);end_x,end_z=x+1,z
+                else:
+                    x+=int(sample['sign']>0);end_x,end_z=x,z+1
+                p.drawLine(QPointF(self.ox+x*self.scale,self.oz+z*self.scale),
+                           QPointF(self.ox+end_x*self.scale,self.oz+end_z*self.scale))
         # Pending diff is exact, separate from permission / space visibility.
         proposal=self.manager.owner.proposal
         if proposal is not None and self.manager.owner.compare.currentIndex()==0:

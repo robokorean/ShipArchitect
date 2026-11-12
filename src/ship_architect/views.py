@@ -178,7 +178,7 @@ class View3D(QWidget):
     def set_document(self, doc):
         self.doc = doc
         self.blocks = doc.schematic.blocks
-        self.mesh=MeshScene();self.mesh_key=None;self.frame=None;self.frame_camera=None;self.validation_spaces=[]
+        self.mesh=MeshScene();self.mesh_key=None;self.frame=None;self.frame_camera=None;self.validation_spaces=[];self.partition_faces=[]
         self.invalidate_data()
         self.reset_camera()
         self.rebuild()
@@ -471,6 +471,20 @@ class View3D(QWidget):
         if getattr(self,'validation_spaces',[]) and not self.interaction_active:
             from .space_geometry import draw_volumes
             draw_volumes(self,p,spaces_override=self.validation_spaces,selectable=False)
+        if getattr(self,'partition_faces',[]) and not self.interaction_active:
+            from PySide6.QtGui import QPolygonF
+            p.setPen(QPen(QColor('#ff9d42'), 2))
+            p.setBrush(QColor(255,157,66,95))
+            for sample in self.partition_faces:
+                axis=(1,2,0)[sample['axis_yzx']]
+                u,v=[n for n in range(3) if n!=axis]
+                for xyz in sample['positions']:
+                    q=np.tile(np.asarray(xyz,dtype=float),(4,1))
+                    q[:,axis]+=int(sample['sign']>0)
+                    q[[1,2],u]+=1
+                    q[[2,3],v]+=1
+                    p.drawPolygon(QPolygonF([QPointF(*point) for point in self.project(q)]))
+            p.setBrush(Qt.BrushStyle.NoBrush)
         for axis, label, c in [(0, '+X', '#ef978e'), (1, '+Y', '#91d9aa'), (2, '+Z', '#87b8ef')]:
             points = np.zeros((2, 3))
             points[1, axis] = max(w, h, l)*.18
