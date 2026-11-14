@@ -55,6 +55,12 @@ class PlaneCanvas(QWidget):
             if not space_visible(owner.view,s):continue
             low=s['runs'][0] if s['runs'] else None
             # Exact overlay mask is built into the plane image; no permission bbox approximation.
+        panel=getattr(owner,'structure_review',None)
+        if panel is not None:
+            overlay=panel.overlay_image(u,v,f,self.panel.slice.value(),self.panel.projection.isChecked())
+            if overlay is not None:
+                if flip or v==1:overlay=overlay.mirrored(flip,v==1)
+                p.drawImage(QRectF(self.ox,self.oy,size[u]*self.scale,size[v]*self.scale),overlay)
         selected=getattr(getattr(owner,'workbench',None),'selected_xyz',None)
         if selected and selected[f]==self.panel.slice.value():p.setPen(QPen(QColor('#ffdf76'),2));p.drawEllipse(self.point(selected),6,6)
         path=getattr(owner.view,'route_path',[]);p.setPen(QPen(QColor('#ffda65'),3))

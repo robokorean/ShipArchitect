@@ -77,6 +77,7 @@ class Workbench:
     def poll_changes(self):
         if self.owner.closing:return
         self.rebuild_tree()
+        if hasattr(self.owner,'structure_review'):self.owner.structure_review.attach()
         pending=getattr(self,'pending_route',None)
         if pending and self.owner.operation is None:
             ids,identity,started=pending;network=self.owner.network_view
@@ -155,7 +156,7 @@ class Workbench:
         payload=self.settings();self.owner.doc.view_settings=payload
         try:atomic_write(self.display_path(),json.dumps({'size':self.owner.doc.schematic.size,'settings':payload},ensure_ascii=False).encode())
         except OSError as e:self.owner.statusBar().showMessage('표시 설정 저장 실패: '+str(e))
-    def settings(self):return {'space_presentation':getattr(self.owner.view,'space_display',{}),'axis':self.cut_axis.currentText(),'position':self.cut_position.value(),'side':self.cut_side.currentText(),'exterior':self.exterior.isChecked(),'roof':self.roof.isChecked(),'occluders':self.occluders.isChecked(),'hidden':sorted(self.hidden_blocks),'hidden_overlays':sorted(self.hidden_overlays),'hidden_groups':sorted(self.hidden_groups),'isolation':self.isolation,'selected':self.selection_key,'selected_keys':[i.data(0,ROLE) for i in self.tree.selectedItems() if i.data(0,ROLE)],'selected_xyz':self.selected_xyz,'selected_kind':self.selected_kind,'layer':self.owner.layer.value(),'plane_orientation':self.axis_plan.orientation.currentText(),'plane_slice':self.axis_plan.slice.value(),'plane_projection':self.axis_plan.projection.isChecked(),'show_blocks':self.owner.view.show_blocks,'show_spaces':self.owner.view.show_spaces,'only_space':self.owner.space_manager.only.isChecked(),'ghost_floors':self.owner.space_manager.ghost.isChecked(),'legacy_cut':self.owner.clip.isChecked(),'single_layer':self.owner.single_layer.isChecked(),'zone_clip':self.owner.zone_clip.isChecked(),'expanded':self.expanded_keys()}
+    def settings(self):return {'structure_layers':sorted(self.owner.structure_review.visible) if hasattr(self.owner,'structure_review') else [],'structure_opacity':self.owner.structure_review.opacity.value() if hasattr(self.owner,'structure_review') else .65,'space_presentation':getattr(self.owner.view,'space_display',{}),'axis':self.cut_axis.currentText(),'position':self.cut_position.value(),'side':self.cut_side.currentText(),'exterior':self.exterior.isChecked(),'roof':self.roof.isChecked(),'occluders':self.occluders.isChecked(),'hidden':sorted(self.hidden_blocks),'hidden_overlays':sorted(self.hidden_overlays),'hidden_groups':sorted(self.hidden_groups),'isolation':self.isolation,'selected':self.selection_key,'selected_keys':[i.data(0,ROLE) for i in self.tree.selectedItems() if i.data(0,ROLE)],'selected_xyz':self.selected_xyz,'selected_kind':self.selected_kind,'layer':self.owner.layer.value(),'plane_orientation':self.axis_plan.orientation.currentText(),'plane_slice':self.axis_plan.slice.value(),'plane_projection':self.axis_plan.projection.isChecked(),'show_blocks':self.owner.view.show_blocks,'show_spaces':self.owner.view.show_spaces,'only_space':self.owner.space_manager.only.isChecked(),'ghost_floors':self.owner.space_manager.ghost.isChecked(),'legacy_cut':self.owner.clip.isChecked(),'single_layer':self.owner.single_layer.isChecked(),'zone_clip':self.owner.zone_clip.isChecked(),'expanded':self.expanded_keys()}
     def attach_document(self):
         self.busy=True;self.tree.clear();self.signature=None;self.pending_route=None;self.selected_xyz=None;self.selection_key=None;self.isolation=None;self.display_exterior=None;self.hidden_blocks=set();self.hidden_overlays=set();self.hidden_groups=set();self.evidence=[];self.equipment=[]
         p=getattr(self.owner.doc,'view_settings',{})
@@ -525,6 +526,7 @@ class Workbench:
         view=self.owner.view
         if self.selected_xyz:
             xyz=np.array(self.selected_xyz,float);painter.setPen(QPen(QColor('#ffdf76'),2));view.box(painter,Bounds(tuple(map(int,xyz)),tuple(map(int,xyz))))
+        if hasattr(self.owner,'structure_review'):self.owner.structure_review.draw_3d(painter)
         if view.interaction_active:return
         if 'equipment' not in self.hidden_groups:
             for record in self.equipment[:2000]:
@@ -542,6 +544,13 @@ class Workbench:
                 if len(pixels)>1:painter.drawLine(QPointF(*pixels[0]),QPointF(*pixels[-1]))
                 else:painter.drawEllipse(QPointF(*pixels[0]),5,5)
     def draw_2d(self,plan,painter):
+        panel=getattr(self.owner,'structure_review',None)
+        if panel is not None:
+            image=panel.overlay_image(0,2,1,plan.layer)
+            if image is not None:
+                from PySide6.QtCore import QRectF
+                w,_,l=self.owner.doc.schematic.size
+                painter.drawImage(QRectF(plan.ox,plan.oz,w*plan.scale,l*plan.scale),image)
         if 'equipment' not in self.hidden_groups:
             painter.setPen(QPen(QColor('#d09af2'),2))
             for record in self.equipment[:2000]:

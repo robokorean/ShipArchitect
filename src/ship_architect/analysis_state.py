@@ -32,6 +32,11 @@ def validate(value,size):
             Bounds(tuple(c['lo']),tuple(c['hi'])).validate(size)
             if c.get('decision') not in ('auto','review','exclude','registered'):raise ValueError('후보 판정 오류')
         if count>500000:raise ValueError('후보 전체 50만 runs 한도')
+        review=last.get('structure_review')
+        if review is not None:
+            from .structure_review import validate_review
+            validate_review(review,size)
+
     reference=state.get('session_reference')
     if reference is not None:
         if not isinstance(reference,dict):

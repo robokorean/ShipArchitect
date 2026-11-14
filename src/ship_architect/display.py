@@ -112,6 +112,12 @@ def validate_settings(value,size):
             if type(cfg.get(k)) is bool:p[k]=cfg[k]
         p['visibility']={str(k):v for k,v in list(cfg.get('visibility',{}).items())[:4096] if isinstance(k,str) and type(v) is bool} if isinstance(cfg.get('visibility'),dict) else {}
         out['space_presentation']=p
+    if isinstance(value.get('structure_layers'),list):
+        from .structure_review import LAYERS
+        out['structure_layers']=[x for x in value['structure_layers'][:20] if isinstance(x,str) and (x in LAYERS or x=='manual')]
+    opacity=value.get('structure_opacity')
+    if type(opacity) in (int,float) and .1<=opacity<=1:
+        out['structure_opacity']=opacity
     return out
 
 

@@ -87,7 +87,7 @@ def test_full_mesh_frames_keep_geometry_and_overlay_toggles_do_not_clear_frame(w
 def test_analysis_tabs_share_right_area_and_preserve_data(window):
  w=window;ui=w.integrated_ui;before=w.doc.schematic.blocks.copy();ui.open_analysis();QTest.qWait(30)
  assert w.dockWidgetArea(ui.analysis_dock)==Qt.DockWidgetArea.RightDockWidgetArea and ui.analysis_dock in w.tabifiedDockWidgets(w.workbench.editor_dock)
- assert ui.scene_pages.count()==2 and ui.properties.count()==5
+ assert ui.scene_pages.count()==2 and ui.properties.count()==6 and ui.properties.tabText(5)=='구조 검증'
  ui.open_properties(0);ui.open_analysis();assert np.array_equal(before,w.doc.schematic.blocks)
  state=ui.ui_state();assert any(d['name']=='structure_analysis' for d in state['docks'])
 

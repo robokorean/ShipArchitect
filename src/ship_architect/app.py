@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         hl=QVBoxLayout(hbox)
         self.history_view=QPlainTextEdit();self.history_view.setReadOnly(True);self.history_view.setMaximumHeight(140)
         hl.addWidget(self.history_view);side.addWidget(hbox)
-        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.5: 외관 복셀·메시 · 일괄 검토 · 설비 규칙\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
+        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.6: 외형·갑판·개구부 · 2D/3D 구조 검증\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
         note.setWordWrap(True)
         note.setStyleSheet('color: #9cacc0;')
         side.addWidget(note)

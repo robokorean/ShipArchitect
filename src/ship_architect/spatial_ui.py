@@ -75,6 +75,7 @@ class SpatialBatch:
         if self.result:self.owner.doc.space_candidates=copy.deepcopy(self.result.get('candidates',[]));self.owner.doc.space_revision=self.owner.doc.revision
         self.refresh()
         self.sessions.describe()
+        if hasattr(self.owner,'structure_review'):self.owner.structure_review.attach()
     def refresh(self,*_):
         from PySide6.QtWidgets import QListWidgetItem
         p=self.panel;d=self.owner.doc;old=p.current();selected={c['id'] for c in self.selected()};p.list.blockSignals(True);p.list.clear();old_reason=self.reason.currentData();self.reason.blockSignals(True);self.reason.clear();self.reason.addItem('전체 원인',None)

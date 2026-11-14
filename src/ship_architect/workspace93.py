@@ -43,6 +43,13 @@ class Workspace93:
         w.resizeDocks([self.b.scene_dock,self.b.editor_dock],[270,390],Qt.Orientation.Horizontal)
         from .space_tools import SpaceTools
         self.space_tools=SpaceTools(w)
+        from .structure_review_ui import StructureReview
+        w.structure_review=StructureReview(w)
+        scroll=QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(w.structure_review)
+        self.structure_page=ui.properties.addTab(scroll,'구조 검증')
+        w.structure_review.attach()
     def show(self,widget):
         self.bottom.setCurrentWidget(widget);self.result_dock.show();self.result_dock.raise_();
         if not self.result_dock.isFloating():self.w.resizeDocks([self.result_dock],[230],Qt.Orientation.Vertical)
@@ -132,3 +139,4 @@ class Workspace93:
     def attach(self):
         self.w.space_view.bulk.attach();self.w.view.validation_spaces=[]
         if hasattr(self,'space_tools'):self.space_tools.attach()
+        if hasattr(self.w,'structure_review'):self.w.structure_review.attach()

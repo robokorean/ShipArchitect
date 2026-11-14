@@ -39,7 +39,7 @@ def components(allowed,queue,cancel,progress=None):
         start=seed+1
     return labels,k
 
-def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True):
+def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True,structure_review=True):
     started=time.perf_counter();bounds.validate(doc.schematic.size)
     if bounds.volume>MAX_VOLUME:raise ValueError('외관 기반 분석도 한 번에 800만 셀 이하로 선택하세요.')
     sc=doc.schematic;x0,y0,z0=bounds.lo;X,Y,Z=bounds.hi;H,L,W=Y-y0+1,Z-z0+1,X-x0+1
@@ -332,7 +332,14 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             part['candidate_id']=by_label.get(part['label'])
     for decision in partition_decisions:
         decision['source_ids']=['EXT-'+f[:12] for f in decision.get('source_fingerprints',[])]
-    result={'method':METHOD,'algorithm_version':ALGORITHM_VERSION,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+    review = None
+    if structure_review:
+        if progress:progress(95,'관측 외벽·갑판·개구부 및 부분 구획 분석')
+        from .structure_review import analyse
+        review = analyse(doc,bounds,hull,terrain,air,raw_exterior,domain,labels,candidates,progress,cancel)
+    result={'method':METHOD,'algorithm_version':ALGORITHM_VERSION,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair,'structure_review':structure_review},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+    if review is not None:
+        result['structure_review']=review
     def details():
         for c in candidates:
             yield {'candidate':{k:v for k,v in c.items() if k not in ('volume_runs','footprint')}}
@@ -342,7 +349,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         for row in portals:yield {'segmentation_connection':row}
         for row in devices:yield {'semantic_feature':row}
         for row in partition_decisions:yield {'partition_decision':row}
-    result['trace_id']=evidence('exterior_first', {k:v for k,v in result.items() if k not in ('candidates','semantic_features','virtual_boundary_sample','connections','shell_face_runs','partition_decisions')},details())
+    result['trace_id']=evidence('exterior_first', {k:v for k,v in result.items() if k not in ('candidates','semantic_features','virtual_boundary_sample','connections','shell_face_runs','partition_decisions','structure_review')},details())
     if progress:progress(100,'외관 기반 인식·검증 완료')
     return result
 

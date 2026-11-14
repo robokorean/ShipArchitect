@@ -40,11 +40,11 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
       - run: python tools/build_release.py
-      - run: python tools/verify_distribution.py dist/ShipArchitect_v0.9.3.5.zip --output distribution_check.json
+      - run: python tools/verify_distribution.py dist/ShipArchitect_v0.9.3.6.zip --output distribution_check.json
       - uses: actions/upload-artifact@v4
         with:
-          name: runtime-v0.9.3.5
-          path: dist/ShipArchitect_v0.9.3.5.zip
+          name: runtime-v0.9.3.6
+          path: dist/ShipArchitect_v0.9.3.6.zip
       - name: Create version tags and release
         shell: bash
         env:
@@ -52,10 +52,10 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git rev-parse v0.9.3.5 >/dev/null 2>&1; then
-            git tag v0.9.3.5 "$GITHUB_SHA"
-            git push origin refs/tags/v0.9.3.5
+          if ! git rev-parse v0.9.3.6 >/dev/null 2>&1; then
+            git tag v0.9.3.6 "$GITHUB_SHA"
+            git push origin refs/tags/v0.9.3.6
           fi
-          if ! gh release view v0.9.3.5 >/dev/null 2>&1; then
-            gh release create v0.9.3.5 dist/ShipArchitect_v0.9.3.5.zip --title 'Ship Architect v0.9.3.5' --notes-file CHANGELOG.md
+          if ! gh release view v0.9.3.6 >/dev/null 2>&1; then
+            gh release create v0.9.3.6 dist/ShipArchitect_v0.9.3.6.zip --title 'Ship Architect v0.9.3.6' --notes-file CHANGELOG.md
           fi

@@ -1,3 +1,10 @@
+# v0.9.3.6
+
+- Add independently selectable structure evidence in the 2D and 3D editors, including hull surfaces, deck and support geometry, equipment, observed air interfaces, virtual boundaries and both air masks.
+- Record directional opening evidence, paired deck and aperture evidence, structural classification and equipment adjacency while retaining exact legacy candidate geometry.
+- Add analysis-only review holds and manually marked virtual planes with Undo/Redo, project and snapshot persistence, and diagnostic detail export.
+- Verify the runtime ZIP separately from historical project data and development evidence.
+
 # v0.9.3.5
 
 - Show all regular analysis candidates independently of selection.
