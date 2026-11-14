@@ -139,6 +139,7 @@ def test_visual_review_and_json_export_through_qt(window, monkeypatch, tmp_path)
     panel.recognition.export_json()
     wait_for(lambda:ready(window) and target.is_file(), seconds=30)
     result=json.loads(target.read_text(encoding='utf-8'))
-    assert result['algorithm_version']=='0.9.3.3'
+    from ship_architect import __version__
+    assert result['algorithm_version']==__version__
     assert result['candidates'][0]['boundary_contacts']['roof'] == 144
     assert doc.schematic.blocks[2,2,2]==0

@@ -19,8 +19,10 @@ class Tee:
     def __init__(self,console,log):self.console,self.log=console,log
     def write(self,text):
         self.log.write(text);self.log.flush()
-        return self.console.write(text)
-    def flush(self):self.log.flush();self.console.flush()
+        return self.console.write(text) if self.console is not None else len(text)
+    def flush(self):
+        self.log.flush()
+        if self.console is not None:self.console.flush()
 
 
 def run_logged(command):
@@ -80,6 +82,7 @@ def main():
     print('Packages:',target,flush=True)
     print('PySide6:',PySide6.__version__,'NumPy:',numpy.__version__,'Numba:',numba.__version__,flush=True)
     if '--check' in sys.argv[1:]:return 0
+    if '--gui' in sys.argv:sys.argv.remove('--gui')
     sys.path.insert(0,str(project/'src'))
     os.chdir(project)
     runpy.run_path(str(project/'src'/'main.py'),run_name='__main__')

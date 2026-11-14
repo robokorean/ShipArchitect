@@ -17,7 +17,7 @@ import traceback
 import uuid
 import zipfile
 
-APP_VERSION = '0.9.3.3'
+APP_VERSION = '0.9.3.4'
 MAX_LOG_BYTES = 5 * 1024 * 1024
 ROTATIONS = 3
 _lock = threading.RLock()
@@ -160,6 +160,15 @@ def report(destination, *, document=None, ui_state=None):
             if document is not None:
                 state=getattr(document,'analysis_state',{})
                 z.writestr('analysis_summary.json',json.dumps({'block_epoch':getattr(document,'block_epoch',0),'equipment_rules':len(state.get('equipment_rules',{})),'space_rules':len(state.get('space_rules',[])),'decisions':len(state.get('decisions',{})),'last_result':{k:v for k,v in state.get('last_result',{}).items() if k not in ('candidates','shell_face_runs')}},ensure_ascii=False))
+                if state.get('session_reference'):
+                    reference=state['session_reference']
+                    z.writestr('analysis_session_comparison.json',json.dumps(_clean({
+                        'side':state.get('session_side'),
+                        'reference_method':reference.get('method'),
+                        'reference_algorithm_version':reference.get('algorithm_version'),
+                        'reference_provenance':reference.get('provenance'),
+                        'changes':state.get('session_changes',[]),
+                    }),ensure_ascii=False))
                 comparison=state.get('comparison')
                 if comparison:
                     z.writestr('recognition_comparison.json',json.dumps(_clean({'scope':comparison['scope'],'matches':comparison['matches'],'old_only_ids':comparison.get('old_only_ids',[]),'new_only_ids':comparison.get('new_only_ids',[]),'old':{k:v for k,v in comparison['old'].items() if k not in ('candidates','shell_face_runs')},'new':{k:v for k,v in comparison['new'].items() if k not in ('candidates','shell_face_runs')} }),ensure_ascii=False,indent=2))

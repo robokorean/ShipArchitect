@@ -1,3 +1,10 @@
+# v0.9.3.4
+
+- Explicit clean and protected recognition sessions, saved snapshot comparison and exact-cell difference overlays.
+- Candidate provenance and block state signatures; confirmed spaces change through explicit registration.
+- Broad unresolved volumes grouped at paired physical deck faces without changing any air or blocks.
+- Windows console and GUI launch entry points with startup logs and work-stage splash.
+
 # v0.9.3.3
 
 - Use broad boundary-connected soil as environmental terrain during exterior analysis.

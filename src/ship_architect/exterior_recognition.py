@@ -12,7 +12,7 @@ from .spatial3d import next_seed,flood_step,fingerprint,MAX_VOLUME
 from .space_model import bbox
 from .diagnostics import evidence
 from .voxel_mesh import indexed_mesh,summary,validate_boundary
-from .exterior_structure import ALGORITHM_VERSION, terrain_mask, repair_partitions, exposure_class
+from .exterior_structure import ALGORITHM_VERSION, terrain_mask, repair_partitions, exposure_class, split_deck_complexes
 METHOD='exterior_voxel_mesh'
 
 @njit(cache=True,nogil=True)
@@ -143,6 +143,14 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         labels,partition_decisions=repair_partitions(
             labels,hull,source_blocks,sc.palette,bounds,protected,
             set(state.get('partition_rejections',[])),cancel)
+    if progress:progress(50,'실제 갑판 접촉과 수직 개구부 검사')
+    deck_complexes=split_deck_complexes(labels,hull,raw_exterior,bounds,cancel)
+    deck_parts={p['label']:source for source,rec in deck_complexes.items() for p in rec['parts']}
+    k+=len(deck_parts)
+    if deck_parts:
+        for decision in partition_decisions:
+            if any(label in deck_complexes for label in decision['result_labels']):
+                decision['deck_subdivision']=True
     # Sparse exact cells, counters and virtual boundaries; no per-voxel Python objects.
     runs=defaultdict(list);run_count=0;counts=Counter();raw_counts=Counter();feet=Counter();heads=Counter();patches=Counter();virtual=Counter();pairs=Counter();interfaces=[];unknown=set();surface_samples=[]
     known={i for i,s in sc.palette.items() if s.startswith('minecraft:') and not any(t in s for t in ('stairs','slab','fence','pane','door','trapdoor','water','lava','carpet','snow','leaves'))}
@@ -254,11 +262,27 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         c['boundary_contacts']={key:f[key] for key in (
             'hull','terrain','air','roof','floor','top_boundary','bottom_boundary','open_side','other_label_side')}
         c['opening_groups']=openings[ident]
+        # Preserve a useful distinction without inferring equipment or room purpose.
+        c['enclosure_profile']={
+            'roof_fraction':round(f['roof']/max(1,f['top_boundary']),4),
+            'floor_fraction':round(f['floor']/max(1,f['bottom_boundary']),4),
+            'external_air_fraction':round(raw_counts[ident]/max(1,volume),4),
+            'lateral_open_faces':f['open_side'],
+        }
         c['structure_class']=exposure_class(c,f)
         if c['structure_class'] in ('exterior_air','exposed_deck'):
             c['reasons'].append('unsupported_exterior' if c['structure_class']=='exterior_air' else 'exposed_deck')
             if c['structure_class']=='exterior_air':
                 c['decision']=c['base_decision']='exclude'
+        if ident in deck_parts:
+            c['decision']=c['base_decision']='exclude'
+            c['deck_complex_source']=deck_parts[ident]
+            c['reasons'].append('unresolved_deck_group')
+        elif c['structure_class']=='uncertain' and raw_counts[ident] and hi[1]-lo[1]>=12:
+            horizontal=max(1,(hi[0]-lo[0]+1)*(hi[2]-lo[2]+1))
+            if f['floor']/max(1,f['bottom_boundary'])<.4 and volume/horizontal>=4:
+                c['structure_class']='vertical_connection_review'
+                c['reasons'].append('vertical_air_requires_facility_review')
         candidates.append(c)
         if progress:progress(65+int(30*(number+1)/max(1,min(512,len(ordered)))),'복셀 외곽 메시·원본 대조')
     by_label={c['virtual_boundary']['label']:c['id'] for c in candidates};portals=[]
@@ -291,13 +315,19 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     from .space_classification import classify
     classify(candidates,doc)
     for c in candidates:
-        if c['space_class']=='exterior_or_merged':
+        if 'deck_complex_source' in c:
+            c['space_class']='exterior_or_merged'
+            c['structure_class']='unresolved_deck_group'
+        elif c['space_class']=='exterior_or_merged':
             c['structure_class']='unresolved_exterior_merge'
         elif c['structure_class'] in ('exterior_air','exposed_deck'):
             c['space_class']=c['structure_class']
+    for record in deck_complexes.values():
+        for part in record['parts']:
+            part['candidate_id']=by_label.get(part['label'])
     for decision in partition_decisions:
         decision['source_ids']=['EXT-'+f[:12] for f in decision.get('source_fingerprints',[])]
-    result={'method':METHOD,'algorithm_version':ALGORITHM_VERSION,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair},'terrain':terrain_info,'partition_decisions':partition_decisions,'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+    result={'method':METHOD,'algorithm_version':ALGORITHM_VERSION,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
     def details():
         for c in candidates:
             yield {'candidate':{k:v for k,v in c.items() if k not in ('volume_runs','footprint')}}

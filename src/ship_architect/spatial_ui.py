@@ -13,6 +13,7 @@ REASONS={'exterior_envelope_unresolved':'외부 외형·큰 미분리 영역 (�
 CLASS_NAMES = {
     'closed_interior':'폐쇄형 내부', 'open_interior':'개방형 내부 후보',
     'hangar_or_large_opening':'넓은 개구부 후보', 'exposed_deck':'노출 갑판 후보',
+    'unresolved_deck_group':'미해결 갑판 구역', 'vertical_connection_review':'수직 연결 검토',
     'exterior_air':'외부 공기', 'unresolved_exterior_merge':'미해결 외부 연결', 'uncertain':'불확실',
 }
 REASONS.update(wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
@@ -29,6 +30,9 @@ class SpatialBatch:
         layout.insertLayout(1,row);panel.list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         from .recognition_ui import RecognitionTools
         self.recognition=RecognitionTools(self)
+        from .session_ui import AnalysisSessions
+        self.sessions=AnalysisSessions(self)
+        self.sessions.filter.currentIndexChanged.connect(self.refresh)
     def selected(self):
         ids={i.data(Qt.ItemDataRole.UserRole) for i in self.panel.list.selectedItems()};return [c for c in self.owner.doc.space_candidates if c['id'] in ids]
     def scan(self,auto=False,partial=False,whole=False,scope=None):
@@ -46,15 +50,19 @@ class SpatialBatch:
                     if not intersects(Bounds(tuple(c['lo']),tuple(c['hi'])),b):c['source_block_epoch']=d.block_epoch
                 r['candidates']+=copies
                 r['candidates']=r['candidates'][:512]
+            from .analysis_sessions import provenance
+            r['provenance']=provenance(d,r['method'],'legacy_scan')
             prepared=register(d,r,True) if auto else (d.spaces,r,[])
             return r,prepared
         def done(value):
             if w.doc is not d or d.revision!=revision:self.panel.status.setText('분석 중 문서가 바뀌어 결과를 폐기했습니다. 재시도하세요.');return
             r,(spaces,r,added)=value;r['counts']=dict(Counter(c['decision'] for c in r['candidates']));state['last_result']=r
+            for key in ('session_reference','session_changes','session_side'):state.pop(key,None)
             commit(d,state,spaces,'space_auto_batch' if auto else 'space_analysis');self.result=r;self.panel.result=r
             dirty=d.spatial_dirty
             if dirty is None or all(b.lo[i]<=dirty.lo[i]<=dirty.hi[i]<=b.hi[i] for i in range(3)):d.spatial_dirty=None
-            self.refresh();w.space_manager.refresh();w.refresh_history();self.panel.status.setText(f'3D 완료 · 자동 등록 {len(added)}개 · '+str(dict(Counter(c['decision'] for c in r['candidates'])))+' · 블록 변경 없음')
+            d.analysis_display_origin='현재 분석'
+            self.refresh();w.space_manager.refresh();w.refresh_history();self.sessions.describe();self.panel.status.setText(f'3D 완료 · 자동 등록 {len(added)}개 · '+str(dict(Counter(c['decision'] for c in r['candidates'])))+' · 블록 변경 없음')
             event('space_batch_committed',trace_id=r.get('trace_id'),registered=len(added),partial=partial,scope=r['scope'])
         if hasattr(w,'integrated_ui') and hasattr(w.integrated_ui,'tasks'):w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
         w.run_operation(work,done,'3D 빈 공간 연결성·구조 검증')
@@ -66,6 +74,7 @@ class SpatialBatch:
         self.recognition.mode.setCurrentIndex(1 if self.result and self.result.get('method')=='exterior_voxel_mesh' else 0)
         if self.result:self.owner.doc.space_candidates=copy.deepcopy(self.result.get('candidates',[]));self.owner.doc.space_revision=self.owner.doc.revision
         self.refresh()
+        self.sessions.describe()
     def refresh(self,*_):
         from PySide6.QtWidgets import QListWidgetItem
         p=self.panel;d=self.owner.doc;old=p.current();selected={c['id'] for c in self.selected()};p.list.blockSignals(True);p.list.clear();old_reason=self.reason.currentData();self.reason.blockSignals(True);self.reason.clear();self.reason.addItem('전체 원인',None)
@@ -75,8 +84,16 @@ class SpatialBatch:
             if c.get('method') not in ('3d_air_components','exterior_voxel_mesh'):continue
             if wanted and c['decision']!=wanted:continue
             if wanted_reason and wanted_reason not in c['reasons']:continue
+            change=next((x['status'] for x in d.analysis_state.get('session_changes',[]) if x.get('new_id')==c['id']),None)
+            if d.analysis_state.get('session_side')=='old':change=next((x['status'] for x in d.analysis_state.get('session_changes',[]) if c['id'] in x.get('old_ids',[])),None)
+            mode=self.sessions.filter.currentData()
+            if mode=='changed' and change in (None,'same'):continue
+            if mode=='same' and change!='same':continue
+            if mode=='uncertain' and c['decision']!='review':continue
+            if mode=='excluded' and c['decision']!='exclude':continue
             structure=CLASS_NAMES.get(c.get('structure_class'))
             label=f'{structure} · ' if structure else ''
+            if change:label+=dict(new='신규',same='동일',changed='형상 변경',merge='병합',split='분리',merge_and_split='병합·분리',old_only='저장에만').get(change,change)+' · '
             item=QListWidgetItem(f"{label}{dict(auto='자동 등록 가능',review='검토 필요',exclude='제외',registered='등록됨')[c['decision']]} · {c.get('volume',0):,}셀 · Y={c['lo'][1]}~{c['hi'][1]} · {', '.join(REASONS.get(r,r) for r in c['reasons'])}");item.setData(Qt.ItemDataRole.UserRole,c['id']);item.setToolTip(item.text());p.list.addItem(item)
             if c['id'] in selected:item.setSelected(True)
         p.list.blockSignals(False)
@@ -130,6 +147,8 @@ class SpatialBatch:
         try:
             w=self.owner;d=w.doc;chosen=self.selected();pending={c['id'] for c in chosen if c.get('decision')!='registered'}
             if not chosen:raise ValueError('등록할 후보를 선택하세요.')
+            if w.operation is not None or w.loading:return
+            if d.analysis_state.get('session_side')=='old':raise ValueError('저장 비교는 읽기 전용입니다. 신규 결과로 전환하세요.')
             if any(c.get('source_block_epoch')!=d.block_epoch for c in chosen):raise ValueError('블록 변경 이후 후보가 오래되었습니다. 재분석하세요.')
             r=copy.deepcopy(d.analysis_state.get('last_result') or self.result);spaces,r,added=register(d,r,False,{c['id'] for c in chosen});state=copy.deepcopy(d.analysis_state);state['last_result']=r
             for c in r['candidates']:
@@ -140,7 +159,7 @@ class SpatialBatch:
             record['zones_after']=copy.deepcopy(d.zones);self.result=r;self.refresh();w.space_manager.refresh();w.refresh_zones();w.refresh_history();self.panel.status.setText(f'정확한 3D 공간 {len(added)}개 등록. 기존 겹치는 공간은 보호합니다.')
         except Exception as e:self.owner.error(e)
     def clear_compare(self):
-        self.owner.view.validation_spaces=[];self.owner.view.partition_faces=[];self.owner.view.update();self.owner.space_manager.plan.update()
+        self.owner.view.validation_spaces=[];self.owner.view.partition_faces=[];self.owner.view.update();self.owner.space_manager.plan.update();self.owner.workbench.axis_plan.refresh()
     def compare(self):
         chosen=self.selected()
         if not chosen:return

@@ -37,3 +37,27 @@ outside this repository.
 Verification: Linux Qt offscreen passed 460 tests, including 9 new structure
 and UI cases. The release workflow repeats the full suite and the extracted
 distribution check on Windows.
+
+## v0.9.3.4 analysis snapshots
+
+Raw schematic identity combines its resolved path and original bytes; sidecar
+spaces are stored as spaces-{project_id}.json in the app data directory.
+Matching geometry history, revision, ID and size are checked when restoring.
+Project archives embed spaces and recognition state in project.json; opening
+does not run recognition. Compatible newer sidecar metadata is recovered
+with Undo. Older metadata retains its original provenance.
+
+Clean analysis uses the current committed voxel array through a fresh
+analysis context without prior candidates, decisions or cache. Protected
+analysis applies existing rules. Both stage candidates in the project; only
+explicit candidate registration updates confirmed spaces. Comparison uses
+per-row interval intersections and preserves the previous snapshot.
+Block signatures prevent registering a stale versioned result.
+
+Broad exterior-connected complexes are divided only where physical
+deck contact exists on both sides. Residual open vertical connections
+remain diagnostic samples; derived parts stay hidden and unregistrable.
+The method does not identify the purpose of an upper or lower installation.
+
+The previous test for JSON export now checks the current package version
+instead of a hard-coded 0.9.3.3. Its geometry and export assertions remain.

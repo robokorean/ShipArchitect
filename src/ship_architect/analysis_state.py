@@ -32,6 +32,21 @@ def validate(value,size):
             Bounds(tuple(c['lo']),tuple(c['hi'])).validate(size)
             if c.get('decision') not in ('auto','review','exclude','registered'):raise ValueError('후보 판정 오류')
         if count>500000:raise ValueError('후보 전체 50만 runs 한도')
+    reference=state.get('session_reference')
+    if reference is not None:
+        if not isinstance(reference,dict):
+            raise ValueError('저장 비교 결과 형식 오류')
+        if reference.get('method')=='saved_spaces':
+            candidates=reference.get('candidates',[])
+            if len(candidates)>512:
+                raise ValueError('저장 비교 공간 수 초과')
+            for c in candidates:
+                c['volume_runs']=normalize(c.get('volume_runs',[]),size)
+        else:
+            validate({'last_result':reference},size)
+    changes=state.get('session_changes',[])
+    if not isinstance(changes,list) or len(changes)>1024:
+        raise ValueError('비교 변경 목록 형식 오류')
     comparison=state.get('comparison')
     if comparison is not None:
         if not isinstance(comparison,dict):raise ValueError('인식 비교 형식 오류')
@@ -84,7 +99,8 @@ def register(doc,result,automatic=True,ids=None):
     spaces=copy.deepcopy(doc.spaces);added=[];candidates=copy.deepcopy(result['candidates']);rows={};existing={fingerprint(s['runs']):s['id'] for s in spaces}
     for s in spaces:
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
-    from .space_model import contains
+    from .analysis_sessions import matches_document
+    signature_matches=matches_document(doc,result.get('provenance',{}))
     w,h,l=doc.schematic.size
     for c in candidates:
         if ids is not None and c['id'] not in ids:continue
@@ -96,6 +112,8 @@ def register(doc,result,automatic=True,ids=None):
         if automatic and c.get('method')=='exterior_voxel_mesh' and c.get('validation',{}).get('mesh_volume_matches_voxels') is not True:continue
         required=('closed_within_scope','two_cell_clearance','usable_floor','wide_floor_patch','known_boundary_geometry','complete_component','original_connected_component')
         if automatic and (c.get('method') not in METHODS or any(c.get('checks',{}).get(k) is not True for k in required) or c.get('user_modified')):continue
+        if result.get('provenance') and signature_matches is False:
+            raise ValueError('분석 이후 블록 상태가 달라졌습니다. 새로 분석하세요.')
         if c.get('source_block_epoch')!=doc.block_epoch:raise ValueError('후보가 오래되었습니다. 재분석하세요.')
         if c.get('checks',{}).get('complete_component') is not True:raise ValueError('잘린 3D 후보는 등록할 수 없습니다. 범위를 나눠 재분석하세요.')
         if not c['volume_runs']:continue
@@ -111,6 +129,9 @@ def register(doc,result,automatic=True,ids=None):
         spaces.append(s);added.append(s['id']);
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
         c['decision']='registered';c['confirmed']=True
+        if result.get('provenance'):
+            s['provenance']=copy.deepcopy(result['provenance'])
+            s['provenance']['origin']='automatic' if automatic else 'approved_candidate'
     new=copy.deepcopy(result);new['candidates']=candidates
     return spaces,new,added
 

@@ -12,7 +12,7 @@ from .spatial3d import fingerprint
 SOILS = frozenset('minecraft:' + name for name in (
     'grass_block', 'dirt', 'coarse_dirt', 'rooted_dirt', 'podzol', 'mycelium',
 ))
-ALGORITHM_VERSION = '0.9.3.3'
+ALGORITHM_VERSION = '0.9.3.4'
 MAX_MERGED_VOLUME = 50000
 
 
@@ -234,3 +234,76 @@ def exposure_class(candidate, faces):
             return 'hangar_or_large_opening'
         return 'open_interior'
     return 'uncertain'
+
+
+def split_deck_complexes(labels, hull, raw_exterior, bounds, cancel):
+    """Partition broad exterior-connected complexes at paired physical deck faces.
+
+    The cut changes labels only. Air passages at the deck remain in the result
+    as virtual interfaces. Every derived piece stays unresolved for registration.
+    """
+    reports = {}
+    counts = np.bincount(labels.ravel())
+    new_label = len(counts)
+    for ident in np.flatnonzero(counts > 100_000):
+        if not ident:
+            continue
+        checkpoint(cancel)
+        mask = labels == ident
+        if not np.any(mask & raw_exterior):
+            continue
+        depth, width = mask.any(axis=(0,2)).sum(), mask.any(axis=(0,1)).sum()
+        if width < .8*mask.shape[2] or depth < .8*mask.shape[1]:
+            continue
+        layers = mask.sum(axis=(1,2))
+        floor_contacts = (mask[1:] & hull[:-1]).sum(axis=(1,2))
+        roof_contacts = (mask[:-1] & hull[1:]).sum(axis=(1,2))
+        air_contacts = (mask[:-1] & mask[1:]).sum(axis=(1,2))
+        record = {
+            'source_label': int(ident), 'source_cells': int(counts[ident]),
+            'layers': [{'y': int(y)+bounds.lo[1], 'cells': int(layers[y]),
+                        'through_to_next': int(air_contacts[y]) if y<len(air_contacts) else 0,
+                        'roof_contact': int(roof_contacts[y]) if y<len(roof_contacts) else 0,
+                        'floor_contact': int(floor_contacts[y-1]) if y>0 else 0}
+                       for y in np.flatnonzero(layers)],
+            'cuts': [], 'parts': [], 'reason': 'insufficient_paired_deck_evidence',
+        }
+        # A thick, physically occupied deck must occlude most of the profiles
+        # on both sides. The residual vertical air is the observed opening.
+        for y in range(1,len(layers)-1):
+            lower, upper = int(layers[y-1]), int(layers[y+1])
+            if min(lower,upper)<1200:
+                continue
+            below = float(roof_contacts[y-1])/lower
+            above = float(floor_contacts[y])/upper
+            shared = int(air_contacts[y])
+            if min(below,above)<.55 or shared/min(lower,upper)>.45:
+                continue
+            # Keep the narrow passage on the lower side; split at its upper face.
+            cut=y+1
+            if record['cuts'] and cut+bounds.lo[1]-record['cuts'][-1]['cut_y']<4:
+                continue
+            points = np.argwhere(mask[y] & mask[y+1])
+            record['cuts'].append({
+                'cut_y': cut+bounds.lo[1], 'roof_contact_below': round(below,4),
+                'floor_contact_above': round(above,4), 'air_faces': shared,
+                'reason': 'paired_physical_deck_faces',
+                'sample_xyz': [[int(x)+bounds.lo[0], y+bounds.lo[1], int(z)+bounds.lo[2]]
+                               for z,x in points[::max(1,(len(points)+63)//64)]],
+            })
+        reports[int(ident)] = record
+        if not record['cuts']:
+            continue
+        limits = [0]+[c['cut_y']-bounds.lo[1] for c in record['cuts']]+[len(layers)]
+        record['reason'] = 'deck_groups_with_unresolved_room_identity'
+        for lo,hi in zip(limits,limits[1:]):
+            plane = labels[lo:hi]
+            cells = mask[lo:hi]
+            count = int(cells.sum())
+            if not count:
+                continue
+            plane[cells] = new_label
+            record['parts'].append({'label':new_label,'cells':count,
+                                    'y_lo':lo+bounds.lo[1],'y_hi':hi-1+bounds.lo[1]})
+            new_label += 1
+    return reports

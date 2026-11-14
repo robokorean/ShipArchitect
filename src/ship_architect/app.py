@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         hl=QVBoxLayout(hbox)
         self.history_view=QPlainTextEdit();self.history_view.setReadOnly(True);self.history_view.setMaximumHeight(140)
         hl.addWidget(self.history_view);side.addWidget(hbox)
-        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.3: 외관 복셀·메시 · 일괄 검토 · 설비 규칙\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
+        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.4: 외관 복셀·메시 · 일괄 검토 · 설비 규칙\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
         note.setWordWrap(True)
         note.setStyleSheet('color: #9cacc0;')
         side.addWidget(note)
@@ -1037,13 +1037,28 @@ class MainWindow(QMainWindow):
 def run():
     import sys
     hook_unhandled()
+    print('Startup: creating Qt application',flush=True)
     app = QApplication(sys.argv)
     app.setApplicationName('ShipArchitect')
     app.setOrganizationName('ShipArchitect')
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)
+    from PySide6.QtWidgets import QSplashScreen
+    from PySide6.QtGui import QColor, QPixmap
+    from PySide6.QtCore import Qt
+    pixmap=QPixmap(520,155)
+    pixmap.fill(QColor('#152439'))
+    splash=QSplashScreen(pixmap)
+    splash.showMessage('Ship Architect · 작업 공간과 렌더러 준비',Qt.AlignmentFlag.AlignCenter,Qt.GlobalColor.white)
+    splash.show()
+    app.processEvents()
+    print('Startup: loading settings, editor and scene',flush=True)
     window = MainWindow()
+    print('Startup: workspace ready',flush=True)
+    splash.showMessage('Ship Architect · 작업 공간 준비 완료',Qt.AlignmentFlag.AlignCenter,Qt.GlobalColor.white)
+    app.processEvents()
     window.show()
+    splash.finish(window)
     if len(sys.argv) > 1:
         window.load_path(sys.argv[1])
     return app.exec()

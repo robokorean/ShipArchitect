@@ -266,7 +266,8 @@ class Workbench:
         root=self.tree.invisibleRootItem();spaces=self.node(root,'공간','spaces',self.owner.view.show_spaces);floors=self.node(root,'층','floors',any(d.floor_visibility.get(str(y),True) for y in self.owner.space_manager.levels));blocks=self.node(root,'실제 블록','blocks',self.owner.view.show_blocks)
         routes=self.node(root,'경로','routes','routes' not in self.hidden_groups);connections=self.node(root,'연결 후보','connections','connections' not in self.hidden_groups);equipment=self.node(root,'설비','equipment','equipment' not in self.hidden_groups)
         if not nav.equipment:equipment.setDisabled(True);equipment.setText(1,'설비 분석 필요')
-        candidate_root=self.node(root,'인식 후보','candidates',getattr(self.owner.view,'space_display',{}).get('show_candidates',True));candidate_groups={}
+        origin=getattr(d,'analysis_display_origin','저장 결과')
+        candidate_root=self.node(root,'인식 후보 · '+origin,'candidates',getattr(self.owner.view,'space_display',{}).get('show_candidates',True));candidate_groups={}
         from .space_display import external as external_space
         for c in d.space_candidates:
             label='외부·큰 미분리' if external_space(c,d) else {'auto':'자동 등록 가능','registered':'등록됨','review':'검토 필요','exclude':'제외'}.get(c.get('decision'),'이전 인식')
@@ -277,7 +278,12 @@ class Workbench:
         for s in order:
             y=bbox(s)[0][1]
             if y not in groups:groups[y]=self.node(spaces,'층 Y='+str(y),'spacefloor:'+str(y))
-            key='space:'+s['id'];self.nodes[key]=self.node(groups[y],s['name'],key,space_visible(self.owner.view,s),s['purpose']);self.records[key]=s
+            key='space:'+s['id']
+            meta=s.get('provenance',{})
+            origin='사용자 편집' if meta.get('user_modified') or s.get('manual_modified') else '등록 공간'
+            if not meta:origin='저장 공간 · 이전 버전'
+            self.nodes[key]=self.node(groups[y],s['name'],key,space_visible(self.owner.view,s),origin+' · '+s['purpose'])
+            self.records[key]=s
         for y in self.owner.space_manager.levels:self.nodes['floor:'+str(y)]=self.node(floors,'Y='+str(y),'floor:'+str(y),d.floor_visibility.get(str(y),True))
         self.nodes['route:current']=self.node(routes,'현재 경로','route:current','route:current' not in self.hidden_overlays,'표시' if getattr(self.owner.view,'route_path',[]) else '경로 찾기 필요')
         path=getattr(self.owner.view,'route_path',[])
@@ -425,7 +431,13 @@ class Workbench:
         space=self.owner.doc.active_space()
         if space:
             self.property_name.setText(space['name']);self.property_purpose.setText(space['purpose']);self.property_alpha.setValue(space['opacity'])
-            self.inspector.setPlainText(json.dumps({k:v for k,v in space.items() if k!='runs'}|{'정확한 셀':sum(b-a+1 for _,_,a,b in space['runs']),'구간수':len(space['runs']),'bbox':bbox(space)},ensure_ascii=False,indent=2))
+            provenance=space.get('provenance',{})
+            from .analysis_sessions import matches_document
+            record=dict(provenance,block_signature=provenance.get('modified_block_signature',provenance.get('block_signature')))
+            match=matches_document(self.owner.doc,record)
+            details={'생성 버전':provenance.get('program_version','이전 버전 / 확인 불가'),
+                     '현재 블록 일치':{True:'일치',False:'변경됨',None:'확인 불가'}[match]}
+            self.inspector.setPlainText(json.dumps({k:v for k,v in space.items() if k!='runs'}|details|{'정확한 셀':sum(b-a+1 for _,_,a,b in space['runs']),'구간수':len(space['runs']),'bbox':bbox(space)},ensure_ascii=False,indent=2))
     def nbt_info(self,xyz):
         sc=self.owner.doc.schematic;container=sc.root['Blocks'] if sc.version==3 else sc.root
         for entity in container.get('BlockEntities',[]):
@@ -532,6 +544,20 @@ class Workbench:
 
     def draw_axis(self,canvas,painter):
         panel=canvas.panel;u,v,f,flip,size=canvas.mapping();position=panel.slice.value()
+        for difference in getattr(self.owner.view,'validation_spaces',[]):
+            if not difference['id'].startswith('session-'):continue
+            from .axis_plan import sampled_space_mask
+            from PySide6.QtCore import QRectF
+            mask=sampled_space_mask(difference,f,None if panel.projection.isChecked() else position,1,(size[v],size[u]))
+            color=QColor(difference['color']);color.setAlpha(165)
+            painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(color)
+            for row in np.flatnonzero(mask.any(axis=1)):
+                edges=np.flatnonzero(np.diff(np.r_[False,mask[row],False]))
+                for start,end in edges.reshape(-1,2):
+                    x=size[u]-end if flip else start
+                    y=size[v]-1-row if v==1 else row
+                    painter.drawRect(QRectF(canvas.ox+x*canvas.scale,canvas.oy+y*canvas.scale,
+                                            (end-start)*canvas.scale,canvas.scale))
         if 'equipment' not in self.hidden_groups:
             painter.setPen(QPen(QColor('#cd97ec'),2))
             for record in self.equipment[:2000]:

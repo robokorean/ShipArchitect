@@ -71,6 +71,13 @@ class SpacePlan(LayerView):
                     x+=int(sample['sign']>0);end_x,end_z=x,z+1
                 p.drawLine(QPointF(self.ox+x*self.scale,self.oz+z*self.scale),
                            QPointF(self.ox+end_x*self.scale,self.oz+end_z*self.scale))
+        for difference in getattr(m.owner.view,'validation_spaces',[]):
+            if not difference['id'].startswith('session-'):
+                continue
+            color=QColor(difference['color']);color.setAlpha(165)
+            p.setPen(Qt.PenStyle.NoPen);p.setBrush(color)
+            for a,z,b,Z in plane_rectangles(difference,self.layer):
+                p.drawRect(QRectF(self.ox+a*self.scale,self.oz+z*self.scale,(b-a)*self.scale,(Z-z)*self.scale))
         # Pending diff is exact, separate from permission / space visibility.
         proposal=self.manager.owner.proposal
         if proposal is not None and self.manager.owner.compare.currentIndex()==0:
@@ -150,6 +157,7 @@ class SpaceManager(QWidget):
         except Exception as e:self.status.setText('공간 자동 저장 실패: '+str(e))
     def attach(self):
         self.autosave.stop();d=self.owner.doc
+        d.analysis_display_origin='프로젝트 복원' if getattr(d,'from_project',False) else '원본 열기'
         if self.path().exists():
             try:
                 if self.path().stat().st_size>64_000_000:raise ValueError('공간 자동 저장 파일 크기 초과')
@@ -159,18 +167,44 @@ class SpaceManager(QWidget):
                 if q['project_id']!=d.project_id or q['size']!=list(d.schematic.size):raise ValueError('문서 크기/ID 불일치')
                 spaces=[validate_space(s,d.schematic.size) for s in q['spaces']]
                 if len(spaces)>512 or len({s['id'] for s in spaces})!=len(spaces):raise ValueError('공간 수/ID 오류')
-                if spaces!=d.spaces or q.get('active')!=d.active_space_id:
-                    d.set_spaces(spaces,'space_recover',q.get('active'))
-                d.scope_token();d.floor_visibility=q.get('floor_visibility',{})
                 floor_starts=q.get('floor_starts',[])
-                if not isinstance(floor_starts,list) or any(type(y) is not int or not 0<=y<d.schematic.size[1] for y in floor_starts):raise ValueError('사용자 층 기준 오류')
+                floor_visibility=q.get('floor_visibility',{})
+                active=q.get('active')
+                if active is not None and active not in {s['id'] for s in spaces}:
+                    raise ValueError('자동 저장 선택 공간 ID 오류')
+                if not isinstance(floor_starts,list) or any(type(y) is not int or not 0<=y<d.schematic.size[1] for y in floor_starts):
+                    raise ValueError('사용자 층 기준 오류')
+                if not isinstance(floor_visibility,dict) or any(not str(y).isdigit() or not 0<=int(y)<d.schematic.size[1] or type(v) is not bool for y,v in floor_visibility.items()):
+                    raise ValueError('자동 저장 층 표시 형식 오류')
+                if spaces!=d.spaces or active!=d.active_space_id:
+                    d.set_spaces(spaces,'space_recover',active)
+                d.floor_visibility=floor_visibility
                 d.floor_starts=floor_starts
+                d.analysis_display_origin='로컬 저장 공간 복원'
             except LookupError:pass
             except Exception as e:self.status.setText('자동 저장 공간 복원 실패: '+str(e))
         self.plan.doc=d;self.plan.blocks=d.schematic.blocks;self.plan.layer=self.owner.layer.value();self.refresh();self.detect_floors();self.plan.refresh();self.owner.view.rebuild()
     def changed(self,spaces,action,active=None):
         try:
-            self.owner.reject();self.owner.doc.set_spaces(spaces,action,active);
+            self.owner.reject()
+            from .analysis_sessions import timestamp, block_signature
+            from . import __version__
+            d=self.owner.doc
+            old={s['id']:s for s in d.spaces}
+            at=timestamp()
+            signature=block_signature(d)
+            stamped=[]
+            for space in spaces:
+                previous=old.get(space['id'])
+                if previous!=space:
+                    meta=dict(space.get('provenance',{}))
+                    if previous is None and not meta:
+                        meta.update(program_version=__version__,created_at=at,origin='manual')
+                    meta.update(modified_at=at,modified_by=__version__,last_action=action,
+                                modified_block_signature=signature,user_modified=True)
+                    space=dict(space,provenance=meta)
+                stamped.append(space)
+            d.set_spaces(stamped,action,active)
             if self.owner.doc.active_space() is not None:
                 lo,hi=bbox(self.owner.doc.active_space());self.owner.set_selection(Bounds(lo,hi))
             self.refresh();self.owner.refresh_history();self.owner.update_summary();self.detect_floors();self.owner.view.rebuild();self.autosave.start()

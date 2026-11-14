@@ -31,6 +31,11 @@ class RecognitionTools:
         tools.addStretch()
         p.layout().insertLayout(1,tools)
 
+    @staticmethod
+    def clear_session(state):
+        for key in ('session_reference','session_changes','session_side'):
+            state.pop(key,None)
+
     def engine(self):
         if self.mode.currentIndex()!=1:
             return recognize_3d
@@ -95,7 +100,7 @@ class RecognitionTools:
         b=Bounds((0,0,0),tuple(n-1 for n in d.schematic.size));revision=d.revision
         def done(result):
             if w.doc is not d or d.revision!=revision:return
-            state=copy.deepcopy(d.analysis_state);state['comparison']=result;state['last_result']=apply_rules(result['new'],state,d.schematic.size);commit(d,state,action='recognition_comparison');self.mode.setCurrentIndex(1);self.batch.attach();w.refresh_history();w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
+            state=copy.deepcopy(d.analysis_state);state['comparison']=result;state['last_result']=apply_rules(result['new'],state,d.schematic.size);self.clear_session(state);commit(d,state,action='recognition_comparison');self.mode.setCurrentIndex(1);self.batch.attach();w.refresh_history();w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
             self.batch.panel.status.setText(f"비교 완료 · 기존 {len(result['old']['candidates'])}개/{result['old']['elapsed_seconds']:.2f}초 · 신규 {len(result['new']['candidates'])}개/{result['new']['elapsed_seconds']:.2f}초. IoU는 정답률이 아닙니다. 미등록 비교 결과입니다.")
             self.batch.panel.text.setPlainText(json.dumps({k:v for k,v in result.items() if k not in ('old','new')},ensure_ascii=False,indent=2))
         ignore_terrain=self.ignore_terrain.isChecked()
@@ -105,7 +110,7 @@ class RecognitionTools:
             d=self.w.doc;r=d.analysis_state.get('comparison')
             if not r:raise ValueError('두 방식 전체 비교를 먼저 실행하세요.')
             if r['block_epoch']!=d.block_epoch:raise ValueError('블록 변경 뒤 비교 결과가 오래되었습니다. 다시 비교하세요.')
-            state=copy.deepcopy(d.analysis_state);state['last_result']=apply_rules(r[which],state,d.schematic.size);commit(d,state,action='recognition_comparison_show');self.mode.setCurrentIndex(0 if which=='old' else 1);self.batch.attach();self.w.refresh_history()
+            state=copy.deepcopy(d.analysis_state);state['last_result']=apply_rules(r[which],state,d.schematic.size);self.clear_session(state);commit(d,state,action='recognition_comparison_show');self.mode.setCurrentIndex(0 if which=='old' else 1);self.batch.attach();self.w.refresh_history()
         except Exception as e:self.w.error(e)
     def overlay(self):
         try:
