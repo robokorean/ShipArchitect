@@ -221,6 +221,8 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
                 unknown.update(map(int,np.unique(labels[y][uncertain])));unknown.discard(0)
                 if len(interfaces)<256:
                     for z,x in np.argwhere(cut[y])[:256-len(interfaces)]:interfaces.append({'position':[int(x+x0),int(y+y0),int(z+z0)],'axis_yzx':axis,'sign':-sign,'candidate_label':int(labels[y,z,x]),'neighbour_label':int(near[y,z,x]),'reason':'virtual label boundary; no block written'})
+    from .sky_exposure import top_solid, sky_fraction, classify_sky
+    sky=top_solid(sc,bounds,cancel)
     candidates=[];mesh_failures=[]
     # Always keep the largest useful volumes if UI count limits are reached.
     ordered=sorted(runs,key=lambda i:-counts[i]);omitted=max(0,len(ordered)-512)
@@ -272,8 +274,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         c['structure_class']=exposure_class(c,f)
         if c['structure_class'] in ('exterior_air','exposed_deck'):
             c['reasons'].append('unsupported_exterior' if c['structure_class']=='exterior_air' else 'exposed_deck')
-            if c['structure_class']=='exterior_air':
-                c['decision']=c['base_decision']='exclude'
+            c['decision']=c['base_decision']='exclude'
         if ident in deck_parts:
             c['decision']=c['base_decision']='exclude'
             c['deck_complex_source']=deck_parts[ident]
@@ -322,6 +323,10 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             c['structure_class']='unresolved_exterior_merge'
         elif c['structure_class'] in ('exterior_air','exposed_deck'):
             c['space_class']=c['structure_class']
+    for c in candidates:
+        checkpoint(cancel)
+        if c['decision']!='exclude' or c['structure_class']=='exposed_deck':
+            classify_sky(c,sky_fraction(c['volume_runs'],sky,bounds))
     for record in deck_complexes.values():
         for part in record['parts']:
             part['candidate_id']=by_label.get(part['label'])

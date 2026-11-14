@@ -1,10 +1,10 @@
 """View-only space presentation; shared by tree, plans and 3D, never voxel edits."""
 from .space_model import bbox
-DEFAULTS={'normal_alpha':80,'candidate_alpha':110,'geometry':'mesh','external':False,'only_selected':False,'show_candidates':True,'visibility':{}}
+DEFAULTS={'normal_alpha':80,'candidate_alpha':110,'geometry':'mesh','external':False,'only_selected':False,'mode':'both','show_candidates':True,'visibility':{}}
 
 def config(view):return getattr(view,'space_display',DEFAULTS)
 def external(space,doc):
-    if space.get('space_class') in ('exterior_or_merged','exterior_air'):return True
+    if space.get('space_class') in ('exterior_or_merged','exterior_air','sky_exposed','exposed_deck'):return True
     runs=space.get('volume_runs',space.get('runs',[]))
     if not runs:return False
     volume=space['volume'] if 'volume' in space else sum(b-a+1 for _,_,a,b in runs)
@@ -16,6 +16,14 @@ def external(space,doc):
 
 def visible(view,space,candidate=False):
     cfg=config(view)
+    mode=cfg.get('mode','both')
+    if mode=='none' or (candidate and mode=='confirmed') or (not candidate and mode in ('candidates','changed')):
+        return False
+    if candidate and mode=='changed':
+        if space['id'] not in getattr(view,'changed_candidate_ids',set()):
+            return False
+    if candidate and space.get('decision')=='exclude' and not cfg.get('external',False):
+        return False
     if candidate and not cfg.get('show_candidates',True):return False
     overrides=cfg.get('visibility',{})
     if not overrides.get(space['id'],space.get('visible',True)):return False

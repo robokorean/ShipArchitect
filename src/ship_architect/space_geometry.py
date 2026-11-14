@@ -56,21 +56,43 @@ def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=T
     from .space_model import token
     from .diagnostics import event
     if not hasattr(view,'space_geometry_cache'):view.space_geometry_cache=OrderedDict()
-    spaces=spaces_override if spaces_override is not None else getattr(view,'candidate_boxes',[])[:128] if candidates else view.doc.spaces
-    if getattr(view,'interaction_active',False):spaces=[s for s in spaces if candidates or s['id']==view.doc.active_space_id]
+    spaces=spaces_override if spaces_override is not None else getattr(view,'candidate_boxes',[]) if candidates else view.doc.spaces
+    selected_id=getattr(view,'selected_candidate_id',None) if candidates else view.doc.active_space_id
+    if candidates:
+        spaces=sorted(spaces,key=lambda s:s['id']!=selected_id)
+    if getattr(view,'interaction_active',False):
+        spaces=[s for s in spaces if s['id']==selected_id]
     budget=2500 if getattr(view,'interaction_active',False) else 50000;warn=False
     for space in spaces:
         if spaces_override is None and not space_visible(view,space,candidates):continue
         if not candidates and spaces_override is None and view.exact_space_only and space['id']!=view.doc.active_space_id:continue
         runs=space.get('volume_runs') if candidates else space['runs']
         if not runs:continue
-        clipped=visible_space_runs({'runs':runs},view.doc,view) if hasattr(view,'display_state') else runs
+        display=getattr(view,'display_state',None)
+        # Static overlay geometry is reusable across camera frames.
+        if not hasattr(view,'space_clip_cache'):view.space_clip_cache=OrderedDict()
+        clips=view.space_clip_cache
+        bounds=display.clip_bounds([0,0,0],[n-1 for n in view.doc.schematic.size],view.doc,view.camera()) if display else None
+        clip_key=(id(view.doc),id(runs),display.key() if display else None,
+                  tuple(map(tuple,bounds)) if bounds else None,
+                  getattr(view,'zone_only',False),view.doc.selection if getattr(view,'zone_only',False) else None,
+                  view.layer if getattr(view,'cut',False) or getattr(view,'single_layer',False) else None,
+                  getattr(view,'cut',False),getattr(view,'single_layer',False),
+                  getattr(view,'floor_range',None) if getattr(view,'ghost_floors',False) else None,
+                  tuple(view.visible_y) if getattr(view,'visible_y',None) is not None else None)
+        if clip_key not in clips:
+            clipped=visible_space_runs({'runs':runs},view.doc,view) if display else runs
+            key=hashlib.sha256(json.dumps(clipped,separators=(',',':')).encode()).hexdigest() if clipped else ''
+            clips[clip_key]=(runs,clipped,key)
+            while len(clips)>600:clips.popitem(last=False)
+        else:
+            clips.move_to_end(clip_key)
+        _,clipped,key=clips[clip_key]
         if not clipped:continue
         if spaces_override is None and config(view).get('geometry')=='bounds':
             from .model import Bounds
             from .space_model import bbox
             painter.setBrush(Qt.BrushStyle.NoBrush);view.box(painter,Bounds(*bbox({'runs':clipped})));continue
-        key=hashlib.sha256(json.dumps(clipped,separators=(',',':')).encode()).hexdigest()
         cache=view.space_geometry_cache
         if key not in cache:
             if getattr(view,'interaction_active',False):continue
@@ -91,8 +113,8 @@ def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=T
         q,n=all_quads,all_normals;ii=np.flatnonzero(np.sum(n*view.camera(),axis=1)>1e-6)
         if len(ii)>budget:warn=True;continue
         budget-=len(ii);q=q[ii];pixels=view.project(q.reshape(-1,3)).reshape(-1,4,2);depth=np.mean(q@view.camera(),axis=1);order=np.argsort(depth)
-        selected=candidates or space['id']==view.doc.active_space_id
-        color='#ffc95f' if selected else space_color(space)
+        selected=space['id']==selected_id
+        color='#ffc95f' if selected else '#54bfc9' if candidates else space_color(space)
         c=QColor(color);c.setAlpha(space.get('opacity',60) if spaces_override is not None else space_alpha(view,space,candidates));painter.setBrush(c);painter.setBrush(c)
         edge=QColor(c);edge.setAlpha(110 if candidates else 135);painter.setPen(QPen(edge,.65,Qt.PenStyle.DashLine if candidates else Qt.PenStyle.SolidLine))
         if not selected:painter.setPen(Qt.PenStyle.NoPen)

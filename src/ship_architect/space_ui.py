@@ -148,21 +148,39 @@ class SpaceManager(QWidget):
     def geometry_key(self):
         events=[h for h in self.owner.doc.history if h.get('blocks',0)>0 and h['action'] in ('approve','undo','redo')]
         return hashlib.sha256(json.dumps(events,sort_keys=True).encode()).hexdigest()
-    def path(self):return Path(self.owner.data_dir)/('spaces-'+self.owner.doc.project_id+'.json')
+    def legacy_path(self):
+        return Path(self.owner.data_dir)/('spaces-'+self.owner.doc.project_id+'.json')
+
+    def path(self):
+        d=self.owner.doc
+        if d.source and not getattr(d,'from_project',False):
+            return self.legacy_path().with_suffix('.manual.json')
+        return self.legacy_path()
     def save_metadata(self):
         if self.restoring:return
+        d=self.owner.doc
+        if d.source and not getattr(d,'from_project',False) and not d.spaces and not getattr(d,'save_empty_spaces',False):
+            return
         try:
-            d=self.owner.doc;payload={'version':1,'revision':d.revision,'geometry_key':self.geometry_key(),'project_id':d.project_id,'size':list(d.schematic.size),'spaces':d.spaces,'active':d.active_space_id,'floor_visibility':getattr(d,'floor_visibility',{}),'floor_starts':getattr(d,'floor_starts',[])}
+            payload={'version':1,'revision':d.revision,'geometry_key':self.geometry_key(),'project_id':d.project_id,'size':list(d.schematic.size),'spaces':d.spaces,'active':d.active_space_id,'floor_visibility':getattr(d,'floor_visibility',{}),'floor_starts':getattr(d,'floor_starts',[])}
             atomic_write(self.path(),json.dumps(payload,ensure_ascii=False).encode());self.saved_revision=d.revision
         except Exception as e:self.status.setText('공간 자동 저장 실패: '+str(e))
     def attach(self):
         self.autosave.stop();d=self.owner.doc
         d.analysis_display_origin='프로젝트 복원' if getattr(d,'from_project',False) else '원본 열기'
-        if self.path().exists():
+        if not d.source or getattr(d,'from_project',False):
+            self.restore_metadata()
+        self.plan.doc=d;self.plan.blocks=d.schematic.blocks;self.plan.layer=self.owner.layer.value();self.refresh();self.detect_floors();self.plan.refresh();self.owner.view.rebuild()
+    def restore_metadata(self, manual=False):
+        d=self.owner.doc
+        path=self.path()
+        if manual and not path.exists():
+            path=self.legacy_path()
+        if path.exists():
             try:
-                if self.path().stat().st_size>64_000_000:raise ValueError('공간 자동 저장 파일 크기 초과')
-                q=json.loads(self.path().read_text(encoding='utf8'))
-                if q.get('revision',-1)<d.revision or q.get('geometry_key')!=self.geometry_key():q=None
+                if path.stat().st_size>64_000_000:raise ValueError('공간 자동 저장 파일 크기 초과')
+                q=json.loads(path.read_text(encoding='utf8'))
+                if (not manual and q.get('revision',-1)<d.revision) or q.get('geometry_key')!=self.geometry_key():q=None
                 if q is None:raise LookupError('저장한 프로젝트의 블록 이력을 우선합니다.')
                 if q['project_id']!=d.project_id or q['size']!=list(d.schematic.size):raise ValueError('문서 크기/ID 불일치')
                 spaces=[validate_space(s,d.schematic.size) for s in q['spaces']]
@@ -181,9 +199,14 @@ class SpaceManager(QWidget):
                 d.floor_visibility=floor_visibility
                 d.floor_starts=floor_starts
                 d.analysis_display_origin='로컬 저장 공간 복원'
+                d.save_empty_spaces=True
+                return True
             except LookupError:pass
             except Exception as e:self.status.setText('자동 저장 공간 복원 실패: '+str(e))
-        self.plan.doc=d;self.plan.blocks=d.schematic.blocks;self.plan.layer=self.owner.layer.value();self.refresh();self.detect_floors();self.plan.refresh();self.owner.view.rebuild()
+        if manual:
+            self.status.setText('이 설계도와 일치하는 이전 자동 저장 공간이 없습니다.')
+        return False
+
     def changed(self,spaces,action,active=None):
         try:
             self.owner.reject()
@@ -205,6 +228,7 @@ class SpaceManager(QWidget):
                     space=dict(space,provenance=meta)
                 stamped.append(space)
             d.set_spaces(stamped,action,active)
+            d.save_empty_spaces=True
             if self.owner.doc.active_space() is not None:
                 lo,hi=bbox(self.owner.doc.active_space());self.owner.set_selection(Bounds(lo,hi))
             self.refresh();self.owner.refresh_history();self.owner.update_summary();self.detect_floors();self.owner.view.rebuild();self.autosave.start()

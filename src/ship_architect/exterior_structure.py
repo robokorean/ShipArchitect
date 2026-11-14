@@ -12,7 +12,7 @@ from .spatial3d import fingerprint
 SOILS = frozenset('minecraft:' + name for name in (
     'grass_block', 'dirt', 'coarse_dirt', 'rooted_dirt', 'podzol', 'mycelium',
 ))
-ALGORITHM_VERSION = '0.9.3.4'
+ALGORITHM_VERSION = '0.9.3.4.1'
 MAX_MERGED_VOLUME = 50000
 
 

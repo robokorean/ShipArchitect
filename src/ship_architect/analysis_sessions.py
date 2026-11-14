@@ -22,8 +22,9 @@ def block_signature(doc):
 
 
 def provenance(doc, method, mode):
+    from .exterior_structure import ALGORITHM_VERSION
     return {
-        'program_version': __version__, 'algorithm_version': ('0.9.3' if method=='3d_air_components' else __version__),
+        'program_version': __version__, 'algorithm_version': ('0.9.3' if method=='3d_air_components' else ALGORITHM_VERSION),
         'algorithm': method, 'mode': mode, 'created_at': timestamp(),
         'original_sha256': hashlib.sha256(doc.original).hexdigest(),
         'block_signature': block_signature(doc), 'block_epoch': doc.block_epoch,

@@ -1,7 +1,7 @@
 """Compact right task tabs and a collapsible shared result drawer; no duplicate documents."""
 import copy
 from PySide6.QtCore import Qt,QObject,QEvent,QTimer
-from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QPushButton,QTabWidget,QSplitter,QScrollArea,QHeaderView,QComboBox,QSizePolicy,QPlainTextEdit)
+from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,QPushButton,QTabWidget,QSplitter,QScrollArea,QHeaderView,QComboBox,QSizePolicy,QPlainTextEdit,QToolButton,QMenu)
 from .spatial_ui import SpatialBatch
 from .analysis_state import EQUIPMENT_TYPES,commit
 from .diagnostics import event
@@ -51,23 +51,38 @@ class Workspace93:
         if on and not self.result_dock.isFloating():self.w.resizeDocks([self.result_dock],[230],Qt.Orientation.Vertical)
     def compact_space(self):
         p=self.w.space_view
-        # All top-level analysis actions are short, wrapping in 2 columns.
-        for row in range(p.layout().count()):
-            item=p.layout().itemAt(row)
-            if item.layout() is None:continue
-            layout=item.layout()
-            if isinstance(layout,QHBoxLayout):
-                widgets=[]
-                while layout.count():
-                    child=layout.takeAt(0)
-                    if child.widget():widgets.append(child.widget())
-                grid=QGridLayout()
-                for i,widget in enumerate(widgets):
-                    if isinstance(widget,QPushButton):
-                        full=widget.text();widget.setToolTip(full);widget.setText({'현재 선택의 공간 후보 분석':'3D 후보 분석','후보를 3D 선택으로 확인':'후보 초점','확인한 후보를 구역으로 저장':'선택 후보 확정'}.get(full,full));widget.setMinimumWidth(0)
-                    grid.addWidget(widget,i//2,i%2)
-                layout.addLayout(grid)
-        p.status.setText('3D 연결성·지지 바닥·머리 공간·경계 구조를 검사합니다. 명확한 후보만 자동 등록하며, 검토·제외 목록은 하단에서 확인하세요.')
+        primary={'완전 신규 분석','공간 유지 재분석','선택 후보 등록','전체 3D 분석·자동 등록','저장 공간 복원'}
+        menu_button=QToolButton()
+        menu_button.setText('분석 관리 · 고급')
+        menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu=QMenu(menu_button)
+        archive=menu.addMenu('저장 분석')
+        archive.addAction('현재 결과 저장',self.w.analysis_archive.save)
+        archive.addAction('저장 결과 불러오기',self.w.analysis_archive.restore)
+        secondary=menu.addMenu('비교·경계·내보내기')
+        layout=p.layout()
+        for i in range(layout.count()):
+            item=layout.itemAt(i)
+            row=item.layout()
+            if not isinstance(row,QHBoxLayout):
+                continue
+            widgets=[]
+            while row.count():
+                child=row.takeAt(0)
+                widget=child.widget()
+                if isinstance(widget,QPushButton) and widget.text() not in primary:
+                    secondary.addAction(widget.text(),widget.click)
+                    widget.hide()
+                elif widget is not None:
+                    widgets.append(widget)
+            grid=QGridLayout()
+            for j,widget in enumerate(widgets):
+                widget.setMinimumWidth(0)
+                grid.addWidget(widget,j//2,j%2)
+            row.addLayout(grid)
+        menu_button.setMenu(menu)
+        layout.insertWidget(0,menu_button)
+        p.status.setText('새 결과는 후보로 표시됩니다. 별도 저장과 비교는 분석 관리 메뉴를 사용하세요.')
     def compact_network(self):
         w=self.w;n=w.network_view;old=n.layout()
         for button in n.findChildren(QPushButton):button.hide()

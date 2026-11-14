@@ -14,9 +14,9 @@ CLASS_NAMES = {
     'closed_interior':'폐쇄형 내부', 'open_interior':'개방형 내부 후보',
     'hangar_or_large_opening':'넓은 개구부 후보', 'exposed_deck':'노출 갑판 후보',
     'unresolved_deck_group':'미해결 갑판 구역', 'vertical_connection_review':'수직 연결 검토',
-    'exterior_air':'외부 공기', 'unresolved_exterior_merge':'미해결 외부 연결', 'uncertain':'불확실',
+    'sky_exposed':'하늘에 열린 외부 공간', 'exterior_air':'외부 공기', 'unresolved_exterior_merge':'미해결 외부 연결', 'uncertain':'불확실',
 }
-REASONS.update(wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
+REASONS.update(sky_exposed_not_enclosed='하늘에 열린 공기 · 실내 등록 제외', wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
 
 class SpatialBatch:
     def __init__(self,panel):

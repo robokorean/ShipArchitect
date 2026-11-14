@@ -1,3 +1,11 @@
+# v0.9.3.5
+
+- Show all regular analysis candidates independently of selection.
+- Open raw schematics without restoring stored space or visibility state.
+- Save and reload named recognition snapshots and guard mismatched block signatures.
+- Add reversible metadata-only bulk deletion and consolidate analysis actions.
+- Retain the ceiling exposure fix and PowerShell-free launchers from 0.9.3.4.1.
+
 # v0.9.3.4
 
 - Explicit clean and protected recognition sessions, saved snapshot comparison and exact-cell difference overlays.

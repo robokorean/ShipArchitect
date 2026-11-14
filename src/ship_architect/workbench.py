@@ -163,8 +163,12 @@ class Workbench:
             q=json.loads(self.display_path().read_text())
             if q.get('size')==list(self.owner.doc.schematic.size):p=q['settings']
         except (OSError,ValueError,KeyError,TypeError):pass
+        d=self.owner.doc
+        if d.source and not getattr(d,'from_project',False):
+            p={}
         p=validate_settings(p,self.owner.doc.schematic.size)
         self.owner.doc.view_settings=p
+        if hasattr(self.owner,'space_tools'):self.owner.space_tools.attach()
         manager=self.owner.space_manager
         for widget,key,default in ((manager.blocks,'show_blocks',True),(manager.overlays,'show_spaces',True),(manager.only,'only_space',False),(manager.ghost,'ghost_floors',False),(self.owner.clip,'legacy_cut',False),(self.owner.single_layer,'single_layer',False),(self.owner.zone_clip,'zone_clip',False)):
             widget.blockSignals(True);widget.setChecked(p.get(key,default));widget.blockSignals(False)
@@ -273,6 +277,11 @@ class Workbench:
             label='외부·큰 미분리' if external_space(c,d) else {'auto':'자동 등록 가능','registered':'등록됨','review':'검토 필요','exclude':'제외'}.get(c.get('decision'),'이전 인식')
             if label not in candidate_groups:candidate_groups[label]=self.node(candidate_root,label,'candgroup:'+label)
             key='candidate:'+c['id'];self.node(candidate_groups[label],c['id']+' · '+str(c.get('volume',c.get('area',0)))+'셀',key,space_visible(self.owner.view,c,True),label);self.records[key]=c
+        for group in candidate_groups.values():
+            states=[group.child(i).checkState(0) for i in range(group.childCount())]
+            group.setCheckState(0,Qt.CheckState.Checked if all(v==Qt.CheckState.Checked for v in states)
+                                else Qt.CheckState.Unchecked if all(v==Qt.CheckState.Unchecked for v in states)
+                                else Qt.CheckState.PartiallyChecked)
         order=sorted(d.spaces,key=lambda s:(bbox(s)[0][1],s['name']) if self.sort.currentIndex()==0 else s['name'] if self.sort.currentIndex()==1 else -sum(b-a+1 for _,_,a,b in s['runs']))
         groups={}
         for s in order:
@@ -342,7 +351,9 @@ class Workbench:
             ids={s['id'] for s in d.spaces if key=='space:'+s['id'] or key=='spacefloor:'+str(bbox(s)[0][1])}
             self.owner.space_tools.visibility(ids,value)
         elif key=='candidates':
-            self.owner.view.space_display['show_candidates']=value;self.owner.space_tools.refresh()
+            self.owner.view.space_display['show_candidates']=value
+            if value:self.owner.space_view.overlay.setChecked(True)
+            self.owner.space_tools.refresh()
         elif key.startswith('candidate:') or key.startswith('candgroup:'):
             ids={c['id'] for c in d.space_candidates if key=='candidate:'+c['id'] or key.startswith('candgroup:') and self.nodes.get('candidate:'+c['id']).parent().data(0,ROLE)==key}
             self.owner.space_tools.visibility(ids,value)
@@ -397,6 +408,8 @@ class Workbench:
             panel=self.owner.space_view;panel.bulk.group.setCurrentIndex(0);panel.bulk.reason.setCurrentIndex(0)
             for i in range(panel.list.count()):
                 if panel.list.item(i).data(ROLE)==key.split(':',1)[1]:panel.list.setCurrentRow(i);break
+            self.owner.view.selected_candidate_id=key.split(':',1)[1]
+            self.owner.view.update()
             self.inspector.setPlainText(json.dumps({k:v for k,v in self.records[key].items() if k not in ('volume_runs','footprint')},ensure_ascii=False,indent=2))
         elif key in self.records:
             record=self.records[key];self.selected_kind='equipment' if key.startswith('equip:') else 'connection';xyz=record.get('position') or record.get('positions',[None])[0]

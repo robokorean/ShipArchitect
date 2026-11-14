@@ -59,6 +59,10 @@ class AnalysisSessions:
         if w.loading or w.operation is not None:
             return
         state=w.doc.analysis_state
+        if w.doc.source and not getattr(w.doc,'from_project',False):
+            if w.space_manager.restore_metadata(manual=True):
+                w.space_tools.refresh()
+                w.refresh_history()
         if state.get('session_side')=='new' and state.get('session_reference',{}).get('method') not in (None,'saved_spaces'):
             self.swap()
         w.space_manager.overlays.setChecked(True)
@@ -105,6 +109,9 @@ class AnalysisSessions:
             commit(d,state,action='recognition_'+mode)
             d.analysis_display_origin='완전 신규 분석' if not keep_rules else '공간 유지 재분석'
             self.batch.panel.overlay.setChecked(True)
+            w.view.space_display['show_candidates']=True
+            if w.view.space_display.get('mode') in ('none','confirmed'):
+                w.space_tools.set_mode('both')
             self.batch.attach()
             w.refresh_history()
             self.describe()

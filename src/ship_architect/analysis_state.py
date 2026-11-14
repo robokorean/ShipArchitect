@@ -95,6 +95,8 @@ def apply_rules(result,state,size):
     return result
 
 def register(doc,result,automatic=True,ids=None):
+    if result.get('archive_read_only'):
+        raise ValueError('블록 일치가 확인되지 않은 저장 분석은 등록할 수 없습니다. 신규 분석을 실행하세요.')
     if result.get('block_epoch')!=doc.block_epoch:raise ValueError('블록 변경 뒤 분석 결과가 오래되었습니다.')
     spaces=copy.deepcopy(doc.spaces);added=[];candidates=copy.deepcopy(result['candidates']);rows={};existing={fingerprint(s['runs']):s['id'] for s in spaces}
     for s in spaces:
@@ -105,7 +107,7 @@ def register(doc,result,automatic=True,ids=None):
     for c in candidates:
         if ids is not None and c['id'] not in ids:continue
         if c.get('decision')=='registered':continue
-        if c.get('space_class') in ('exterior_or_merged','exterior_air'):
+        if c.get('space_class') in ('exterior_or_merged','exterior_air','sky_exposed','exposed_deck'):
             if automatic:continue
             raise ValueError('외부 공기/큰 미분리 후보는 방으로 등록하지 않습니다. 작은 경계로 보정하거나 재분석하세요.')
         if automatic and c['decision']!='auto':continue

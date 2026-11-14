@@ -103,9 +103,12 @@ def test_narrow_door_connected_to_outside_produces_review_core_not_auto():
  assert not register(d,r)[2]
 
 
-def test_selected_open_scope_is_review_instead_of_assumed_entire_exterior():
+def test_selected_open_scope_is_excluded_when_full_columns_confirm_open_sky():
  d=Document(Schematic.empty(14,10,14));d.schematic.blocks[1,2:12,2:12]=1;b=Bounds((3,2,3),(10,7,10));r=recognize_3d(d,b)
- assert r['candidates'][0]['decision']=='review' and 'scope_or_exterior_open' in r['candidates'][0]['reasons']
+ assert r['candidates'][0]['decision']=='exclude'
+ assert r['candidates'][0]['space_class']=='sky_exposed'
+ assert r['candidates'][0]['sky_open_column_fraction']==1
+ assert 'scope_or_exterior_open' in r['candidates'][0]['reasons']
 
 
 def test_packaged_demo_expectations_are_actual_cells_and_protected_manual_geometry():

@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse,zipfile,ast,json,hashlib
 ROOT=Path(__file__).resolve().parents[1]
-RUNTIME_FILES=('START_WINDOWS.cmd','START_GUI.vbs','run.ps1','launch.py','requirements.txt','README.md','RUN_WINDOWS.md')
+RUNTIME_FILES=('START_WINDOWS.cmd','START_GUI.vbs','launch.py','requirements.txt','README.md','RUN_WINDOWS.md')
 
 def build(destination):
     files=[ROOT/n for n in RUNTIME_FILES]
@@ -25,4 +25,4 @@ def build(destination):
         assert not any('/'+name+'/' in n for n in z.namelist() for name in ('tests','tools','docs','legacy','private_dev','examples'))
     result={'filename':destination.name,'bytes':destination.stat().st_size,'files':len(files),'sha256':hashlib.sha256(destination.read_bytes()).hexdigest()};print(json.dumps(result));return result
 if __name__=='__main__':
-    a=argparse.ArgumentParser();a.add_argument('--output',type=Path,default=ROOT/'dist/ShipArchitect_v0.9.3.4.zip');args=a.parse_args();build(args.output)
+    a=argparse.ArgumentParser();a.add_argument('--output',type=Path,default=ROOT/'dist/ShipArchitect_v0.9.3.5.zip');args=a.parse_args();build(args.output)

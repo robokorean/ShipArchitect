@@ -128,6 +128,8 @@ def _recognize_3d(doc,bounds,progress=None,cancel=None,partial=False):
                 if axis==1:where[0 if sign==1 else -1]=False
                 if axis==2:where[:,0 if sign==1 else -1]=False
                 ambiguous.update(map(int,np.unique(row[where])))
+    from .sky_exposure import top_solid, sky_fraction, classify_sky
+    sky=top_solid(sc,bounds,cancel)
     candidates=[]
     for number,(k,rr) in enumerate(runs.items()):
         checkpoint(cancel)
@@ -150,6 +152,10 @@ def _recognize_3d(doc,bounds,progress=None,cancel=None,partial=False):
         # Footprint is UI/legacy-zone metadata only. The volume is always the exact 3D component.
         footprint=[[z,a,b] for y,z,a,b in rr if y==low[1]]
         candidates.append(dict(id='3D-'+fp[:12],fingerprint=fp,method='3d_air_components',source_block_epoch=epoch,decision=decision,base_decision=decision,reasons=reasons or ['closed_supported_volume'],checks=checks,kind=kind,floor_y=low[1],area=feet[k],lo=list(low),hi=list(high),volume=volume,volume_runs=rr,footprint=footprint,footprint_truncated=False,wall_ratio=1. if not touch else 0.,ceiling_ratio=1. if not touch else 0.,confirmed=False,shape={'method':'6-connected actual empty cells'},warnings=reasons))
+    for c in candidates:
+        checkpoint(cancel)
+        if c['decision']!='exclude':
+            classify_sky(c,sky_fraction(c['volume_runs'],sky,bounds))
     candidates.sort(key=lambda c:(c['decision']=='exclude',-c['volume']))
     omitted_candidates=max(0,len(candidates)-512)
     if len(candidates)>512:

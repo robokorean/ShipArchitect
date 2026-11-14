@@ -106,6 +106,7 @@ def validate_settings(value,size):
         p={}
         for k in ('normal_alpha','candidate_alpha'):
             if type(cfg.get(k)) is int:p[k]=max(0,min(255,cfg[k]))
+        if cfg.get('mode') in ('both','confirmed','candidates','changed','none'):p['mode']=cfg['mode']
         if cfg.get('geometry') in ('mesh','bounds'):p['geometry']=cfg['geometry']
         for k in ('external','only_selected','show_candidates'):
             if type(cfg.get(k)) is bool:p[k]=cfg[k]

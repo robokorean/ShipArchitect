@@ -8,7 +8,7 @@ class SpaceView(QWidget):
         super().__init__();self.owner=owner;self.result=None;layout=QVBoxLayout(self)
         row=QHBoxLayout();scan=QPushButton('현재 선택의 공간 후보 분석');scan.clicked.connect(self.scan);row.addWidget(scan)
         stop=QPushButton('분석 취소');stop.clicked.connect(lambda:owner.operation.requestInterruption() if owner.operation else None);row.addWidget(stop)
-        self.overlay=QCheckBox('선택 후보의 3D 부피 표시');self.overlay.setChecked(True);self.overlay.toggled.connect(self.show_overlay);row.addWidget(self.overlay);layout.addLayout(row)
+        self.overlay=QCheckBox('분석 후보 전체 표시');self.overlay.setChecked(True);self.overlay.toggled.connect(self.show_overlay);row.addWidget(self.overlay);layout.addLayout(row)
         self.status=QLabel('높이 3칸 이상, 최대 8백만 칸. 바닥 → 연결된 머리 공간 → 벽·천장 검사. 자동 적용하지 않습니다.');self.status.setWordWrap(True);layout.addWidget(self.status)
         self.list=QListWidget();self.list.currentRowChanged.connect(self.describe);layout.addWidget(self.list,1)
         self.text=QPlainTextEdit();self.text.setReadOnly(True);layout.addWidget(self.text,1)
@@ -38,8 +38,16 @@ class SpaceView(QWidget):
         if c:self.text.setPlainText(json.dumps({k:v for k,v in c.items() if k not in ('volume_runs','footprint')}|{'footprint_rows':len(c.get('footprint',[])),'exact_volume_runs':len(c.get('volume_runs',[]))},ensure_ascii=False,indent=2));self.show_overlay()
     def show_overlay(self,*_):
         self.owner.view.partition_faces=[]
-        self.owner.view.candidate_boxes=([self.current()] if self.current() is not None else []) if self.overlay.isChecked() else [];self.owner.view.update()
-        if hasattr(self.owner,'space_manager'):self.owner.space_manager.plan.update()
+        w=self.owner
+        w.view.selected_candidate_id=(self.current() or {}).get('id')
+        w.view.candidate_boxes=list(w.doc.space_candidates) if self.overlay.isChecked() else []
+        state=w.doc.analysis_state
+        w.view.changed_candidate_ids={key for change in state.get('session_changes',[])
+            if change['status']!='same' for key in (
+                change['old_ids'] if state.get('session_side')=='old' else [change['new_id']])}
+        w.view.update()
+        if hasattr(w,'space_manager'):w.space_manager.plan.update()
+        if hasattr(w,'workbench'):w.workbench.axis_plan.refresh()
     def select(self):
         if self.owner.doc.space_revision!=self.owner.doc.revision:self.status.setText('문서가 바뀌었습니다. 공간 후보를 다시 분석하세요.');return
         c=self.current()
@@ -51,6 +59,9 @@ class SpaceView(QWidget):
         if d.space_revision!=d.revision:self.status.setText('문서가 바뀌었습니다. 공간 후보를 다시 분석하세요.');return
         c=self.current()
         if not c or self.owner.operation is not None:return
+        if c.get('surface_role')=='roof_or_outdoor':
+            self.status.setText('지붕 위 또는 노출된 외부 후보는 방으로 등록하지 않습니다.')
+            return
         from .space_model import from_candidate
         revision=d.revision
         def done(space):

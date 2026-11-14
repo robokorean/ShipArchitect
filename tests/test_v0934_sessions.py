@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt
 
-from ship_architect import __version__
+from ship_architect.exterior_structure import ALGORITHM_VERSION
 from ship_architect.analysis_sessions import compare_candidates, provenance, matches_document
 from ship_architect.analysis_state import commit, register
 from ship_architect.exterior_recognition import recognize_exterior
@@ -75,14 +75,14 @@ def test_clean_and_protected_analysis_with_restore_and_approval(window,tmp_path)
     wait_for(lambda:ready(window) and d.analysis_state.get('session_side')=='new',seconds=30)
     fresh=d.analysis_state['last_result']
     assert fresh['provenance']['mode']=='fresh'
-    assert fresh['algorithm_version']==__version__
+    assert fresh['algorithm_version']==ALGORITHM_VERSION
     assert all(c['decision']=='auto' for c in fresh['candidates'])
     assert d.spaces==manual_before and d.analysis_state['session_reference']['algorithm_version']=='0.9.3.3'
     sessions.restore()
     assert d.analysis_state['last_result']['algorithm_version']=='0.9.3.3'
     assert not window.space_view.overlay.isChecked()
     sessions.swap()
-    assert d.analysis_state['last_result']['algorithm_version']==__version__
+    assert d.analysis_state['last_result']['algorithm_version']==ALGORITHM_VERSION
     panel=window.space_view.bulk
     for row in range(panel.panel.list.count()):
         item=panel.panel.list.item(row)
