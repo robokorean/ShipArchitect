@@ -19,7 +19,13 @@ class Tee:
     def __init__(self,console,log):self.console,self.log=console,log
     def write(self,text):
         self.log.write(text);self.log.flush()
-        return self.console.write(text) if self.console is not None else len(text)
+        if self.console is not None:
+            try:
+                self.console.write(text)
+            except UnicodeEncodeError:
+                encoding=getattr(self.console,'encoding',None) or 'ascii'
+                self.console.write(text.encode(encoding,'backslashreplace').decode(encoding))
+        return len(text)
     def flush(self):
         self.log.flush()
         if self.console is not None:self.console.flush()
@@ -27,7 +33,7 @@ class Tee:
 
 def run_logged(command):
     flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' and sys.executable.lower().endswith('pythonw.exe') else 0
-    with subprocess.Popen(command,creationflags=flags,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace') as child:
+    with subprocess.Popen(command,creationflags=flags,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace') as child:
         for line in child.stdout:print(line,end='',flush=True)
         return child.wait()
 
@@ -52,14 +58,14 @@ def prepare(requirements, cache_root):
     python=Path(sys.executable)
     if python.name.lower()=='pythonw.exe':
         python=python.with_name('python.exe')
-    probe=run_logged([str(python),'-I','-m','pip','--version'])
+    probe=run_logged([str(python),'-I','-X','utf8','-m','pip','--version'])
     if probe:
         raise RuntimeError('Base Python has no working pip. Repair this Python installation with the pip option enabled, then retry.')
     target.parent.mkdir(parents=True,exist_ok=True)
     staging=Path(tempfile.mkdtemp(prefix='install-',dir=target.parent))
     try:
         print('Installing private Ship Architect packages:',target,flush=True)
-        result=run_logged([str(python),'-I','-m','pip','install','--disable-pip-version-check',
+        result=run_logged([str(python),'-I','-X','utf8','-m','pip','install','--disable-pip-version-check',
             '--target',str(staging),'-r',str(requirements)])
         if result:
             raise RuntimeError('Package installation failed. See the pip error above.')
