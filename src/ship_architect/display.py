@@ -106,14 +106,14 @@ def validate_settings(value,size):
         p={}
         for k in ('normal_alpha','candidate_alpha'):
             if type(cfg.get(k)) is int:p[k]=max(0,min(255,cfg[k]))
-        if cfg.get('mode') in ('both','confirmed','candidates','changed','none'):p['mode']=cfg['mode']
+        if cfg.get('mode') in ('both','confirmed','candidates','changed','none','recovered','uncertain'):p['mode']=cfg['mode']
         if cfg.get('geometry') in ('mesh','bounds'):p['geometry']=cfg['geometry']
         for k in ('external','only_selected','show_candidates'):
             if type(cfg.get(k)) is bool:p[k]=cfg[k]
         p['visibility']={str(k):v for k,v in list(cfg.get('visibility',{}).items())[:4096] if isinstance(k,str) and type(v) is bool} if isinstance(cfg.get('visibility'),dict) else {}
         out['space_presentation']=p
     if isinstance(value.get('structure_layers'),list):
-        from .structure_review import LAYERS
+        from .structure_review import REVIEW_LAYERS as LAYERS
         out['structure_layers']=[x for x in value['structure_layers'][:20] if isinstance(x,str) and (x in LAYERS or x=='manual')]
     opacity=value.get('structure_opacity')
     if type(opacity) in (int,float) and .1<=opacity<=1:

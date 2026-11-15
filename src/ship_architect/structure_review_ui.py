@@ -15,11 +15,11 @@ from .axis_plan import sampled_space_mask
 from .display import visible_space_runs
 from .model import Bounds
 from .space_display import external
-from .structure_review import LAYERS
+from .structure_review import REVIEW_LAYERS as LAYERS
 from .structural_recognition import ENGINE_NAMES
 
 ROLE = Qt.ItemDataRole.UserRole
-AIR = {'external_air', 'interior'}
+AIR = {'external_air', 'interior','restored_air'}
 DASHED = {'virtual', 'interior'}
 LABELS = {
     'closed_interior':'폐쇄형 내부','open_interior':'개방형 내부',
@@ -59,7 +59,7 @@ class StructureReview(QWidget):
         for title, keys in [
             ('관측 구조와 시설', ['blocks','hull','decks','walls','ceilings','supports','equipment','terrain']),
             ('개구부·추정 경계', ['openings','virtual','manual']),
-            ('공기·공간', ['external_air','interior','final','hidden']),
+            ('공기·공간', ['external_air','interior','restored_air','final','hidden']),
         ]:
             group = QTreeWidgetItem(self.layers, [title])
             group.setFlags(group.flags()|Qt.ItemFlag.ItemIsAutoTristate)

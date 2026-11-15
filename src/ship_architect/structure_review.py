@@ -28,6 +28,9 @@ LAYERS = {
     'terrain': ('분석 제외 지형', '#aa967f', '지형 마스크 · 원본 보존'),
 }
 
+REVIEW_LAYERS={**LAYERS,'restored_air':('넓은 탐색 복원 셀','#e0a0ff','Legacy만 발견한 실제 공기 · 소속과 사용 가능성은 후보별 검토')}
+
+
 
 @njit(cache=True, nogil=True)
 def streak(mask, axis):
@@ -227,7 +230,7 @@ def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, pr
         cls = item['old_class']
         if cls=='closed_interior':
             item.update(classification='closed_interior', confidence='observed_enclosure')
-        elif cls in ('open_interior','hangar_or_large_opening'):
+        elif cls in ('open_interior','hangar_or_large_opening','supported_band_review','discovered_interior_review'):
             item['classification']='open_interior'
         elif cls in ('sky_exposed','exposed_deck'):
             item['classification']='exposed_facility'
@@ -300,6 +303,8 @@ def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, pr
         }.get(item['classification'],'undetermined')
         if cls in ('unresolved_deck_group','unresolved_exterior_merge'):
             item['reasons'].append('legacy broad complex retained; local deck evidence does not establish full interior membership or room division')
+        for field in ('discovery','space_facts','structure_evidence'):
+            if field in candidate:item[field]=candidate[field]
         fragments.append(item)
 
     checkpoint(cancel)
@@ -317,6 +322,7 @@ def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, pr
 def validate_review(review,size):
     """Reject malformed on-disk geometry before the display cache consumes it."""
     from .model import Bounds
+    from .analysis_state import MAX_ANALYSIS_CANDIDATES
     if not isinstance(review,dict) or review.get('version') != VERSION:
         raise ValueError('구조 검증 버전을 확인할 수 없습니다.')
     scope=review.get('scope',{})
@@ -324,7 +330,7 @@ def validate_review(review,size):
     bounds=Bounds(tuple(scope.get('lo',[])),tuple(scope.get('hi',[])))
     bounds.validate(size)
     layers=review.get('layers')
-    if not isinstance(layers,dict) or set(layers)!=set(LAYERS):
+    if not isinstance(layers,dict) or set(layers) not in (set(LAYERS),set(REVIEW_LAYERS)):
         raise ValueError('구조 검증 레이어 목록 오류')
     for layer in layers.values():
         if not isinstance(layer,dict):raise ValueError('구조 검증 레이어 형식 오류')
@@ -342,7 +348,7 @@ def validate_review(review,size):
                     raise ValueError('구조 검증 구간 범위 오류')
                 if n==6 and not ((arr[:,0]>=0)&(arr[:,0]<3)&(np.abs(arr[:,1])==1)).all():
                     raise ValueError('구조 검증 면 방향 오류')
-    for key,limit in (('spaces',512),('manual_boundaries',256)):
+    for key,limit in (('spaces',MAX_ANALYSIS_CANDIDATES),('manual_boundaries',256)):
         records=review.get(key,[])
         if not isinstance(records,list) or len(records)>limit:raise ValueError('구조 검증 항목 수 오류')
         ids=set()

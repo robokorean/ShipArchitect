@@ -39,7 +39,7 @@ def components(allowed,queue,cancel,progress=None):
         start=seed+1
     return labels,k
 
-def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True,structure_review=True,engine='legacy'):
+def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True,structure_review=True,engine='legacy',_discovery=None):
     started=time.perf_counter();bounds.validate(doc.schematic.size)
     if bounds.volume>MAX_VOLUME:raise ValueError('외관 기반 분석도 한 번에 800만 셀 이하로 선택하세요.')
     from .structural_recognition import ENGINES
@@ -49,11 +49,13 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     prior = state.get('last_result',{})
     marks = [] if prior.get('block_epoch')!=doc.block_epoch or prior.get('archive_read_only') or state.get('session_side')=='old' else prior.get('structure_review',{}).get('manual_boundaries',[])
     reference = None
-    if engine in ('hybrid','hybrid37') and not marks and repair:
+    legacy_domain = []
+    if engine=='integrated' or engine in ('hybrid','hybrid37') and not marks and repair:
         original_progress = progress
         if original_progress:original_progress(0,'Hybrid · 보존 가능한 기존 구조 경계 확인')
         reference = scan(doc,bounds,(lambda n,s:original_progress(n//3,'Hybrid 기준 경계 · '+s)) if original_progress else None,
-                         cancel,partial,ignore_terrain=ignore_terrain,repair=True,structure_review=False)
+                         cancel,partial,ignore_terrain=ignore_terrain,repair=repair,structure_review=False,
+                         _discovery=legacy_domain.append if engine=='integrated' else None)
         if original_progress:
             progress=lambda n,s:original_progress(34+n*66//100,s)
     sc=doc.schematic;x0,y0,z0=bounds.lo;X,Y,Z=bounds.hi;H,L,W=Y-y0+1,Z-z0+1,X-x0+1
@@ -105,6 +107,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             if axis==0:vertical=inside.copy()
         domain=air&((~raw_exterior)|(vertical&(votes>=2)))
         del before,after,inside
+        if _discovery is not None:_discovery(domain.copy())
         if progress:progress(30,'외형 투영·가상 개구 경계 후보')
         # Interior cores separate narrow doorways. Multi-source fill covers all
         # domain cells without merging labels; label interfaces are virtual portals.
@@ -121,12 +124,18 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     else:
         if progress:progress(30,'원본 구조에서 바닥·천장·벽 근거 추출')
         from .structure_review import extract_geometry
-        from .structural_recognition import domain_from_structure,label_domain,manual_edges,reserve_verified_partitions,support_edges,refine_large
+        from .structural_recognition import domain_from_structure,label_domain,manual_edges,reserve_verified_partitions,support_edges,refine_large,legacy_volume,label_remaining,supported_bands
         geometry = extract_geometry(doc,bounds,hull,air)
-        graph = {} if engine=='hybrid' else None
+        graph = {} if engine in ('hybrid','integrated') else None
         domain,anchor,structural = domain_from_structure(air,hull,raw_exterior,geometry,engine,cancel,graph=graph)
         edges,applied = manual_edges(domain.shape,bounds,marks,air)
-        reserved = reserve_verified_partitions(reference,domain,air,bounds,cancel) if reference else []
+        reserved = reserve_verified_partitions(reference,domain,air,bounds,cancel,narrow_seams=engine=='integrated') if reference and repair and not marks else []
+        discovery_sources = None
+        if engine=='integrated':
+            discovery_sources,legacy_candidates=legacy_volume(reference,domain.shape,bounds,air,cancel)
+            hybrid_domain=domain.copy()
+            for _,_,_,rows in reserved:
+                for row in rows:hybrid_domain[row]=True
         del reference
         physical = None
         if graph is not None:
@@ -154,6 +163,28 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
                 domain[row]=True
             preserved.append({'candidate_id':key,'volume':volume,'structural_overlap':overlap,
                               'reason':'physical floor and roof coverage, small vertical aperture, validated repaired seam'})
+        band_info={}
+        if engine=='integrated':
+            legacy_mask=legacy_domain.pop()&air
+            domain |= legacy_mask
+            k,band_info=supported_bands(labels,k,domain,hull,geometry,edges,queue,bounds,supported_pieces,cancel)
+            missing=domain&(labels==0)
+            local,n=label_remaining(missing,edges,queue,cancel,source=discovery_sources)
+            labels[missing]=local[missing]+k
+            k+=n
+            legacy_only=legacy_mask&~hybrid_domain
+            common=legacy_mask&hybrid_domain
+            structural['discovery']={
+                'both':int(common.sum()),'legacy_only':int(legacy_only.sum()),
+                'hybrid_only':int((hybrid_domain&~legacy_mask).sum()),
+                'union_cells':int(domain.sum()),'legacy_only_components':n,
+                'additional_removed_after_union':0,
+                'legacy_cells_without_reference_label':int((legacy_mask&(discovery_sources==0)).sum()),
+            }
+            source_counts=np.bincount(labels[legacy_only],minlength=k+1)
+            common_counts=np.bincount(labels[common],minlength=k+1)
+            hybrid_counts=np.bincount(labels[hybrid_domain&~legacy_mask],minlength=k+1)
+            del missing,local,common
         structural.update(counts,manual_boundaries_applied=applied,preserved_partitions=preserved,
                           unassigned_exterior_air_cells=int((raw_exterior&~domain).sum()))
         del anchor,edges,reserved
@@ -282,8 +313,10 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     sky=top_solid(sc,bounds,cancel)
     candidates=[];mesh_failures=[]
     # Always keep the largest useful volumes if UI count limits are reached.
-    ordered=sorted(runs,key=lambda i:-counts[i]);omitted=max(0,len(ordered)-512)
-    for number,ident in enumerate(ordered[:512]):
+    from .analysis_state import MAX_ANALYSIS_CANDIDATES
+    candidate_limit=MAX_ANALYSIS_CANDIDATES if engine=='integrated' else 512
+    ordered=sorted(runs,key=lambda i:-counts[i]);omitted=max(0,len(ordered)-candidate_limit)
+    for number,ident in enumerate(ordered[:candidate_limit]):
         checkpoint(cancel);rr=runs[ident];lo,hi=bbox({'runs':rr});volume=counts[ident];touch=any(lo[i]==bounds.lo[i] or hi[i]==bounds.hi[i] for i in range(3));checks={'closed_within_scope':not touch,'two_cell_clearance':heads[ident]>0,'usable_floor':feet[ident]>=9,'wide_floor_patch':patches[ident]>0,'known_boundary_geometry':ident not in unknown,'complete_component':True,'original_connected_component':raw_counts[ident]==0 and virtual[ident]==0}
         reasons=[]
         if raw_counts[ident]:reasons.append('virtual_exterior_opening')
@@ -350,7 +383,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         if engine!='legacy' and raw_counts[ident] and volume>50000:
             c['decision']=c['base_decision']='exclude'
             c['structure_class']='unresolved_exterior_merge'
-        if engine=='hybrid':
+        if engine in ('hybrid','integrated'):
             if ident in supported_pieces:
                 c['reasons'].append('local_deck_aperture_split')
             unfinished=int(unfinished_counts[ident]) if ident<len(unfinished_counts) else 0
@@ -360,8 +393,35 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             if unfinished>=max(12,volume//4) and volume<=50000 and mesh_ok:
                 c['decision']=c['base_decision']='review'
                 c['structure_class']='unfinished_interior_review'
+        if engine=='integrated':
+            restored=int(source_counts[ident])
+            c['discovery']={'legacy_only_cells':restored,'shared_cells':int(common_counts[ident]),
+                            'hybrid_only_cells':int(hybrid_counts[ident])}
+            c['space_facts']={'observed_empty':True,'external_air_connected':bool(raw_counts[ident]),
+                              'movement':'unverified','purpose':None,'confidence':'review',
+                              'usability':'restricted' if not checks['two_cell_clearance'] else
+                                  'unknown' if not checks['wide_floor_patch'] else 'potential',
+                              'enclosure':'open_connection' if raw_counts[ident] else 'observed_enclosed'}
+            if restored and restored==volume:
+                c['reasons'].append('legacy_discovery_restored')
+                y,z,a,_=rr[0]
+                source=int(discovery_sources[y-y0,z-z0,a-x0])
+                old=legacy_candidates.get(source)
+                if old:
+                    c['discovery']['legacy_source_id']=old['id']
+                # A recovered recess remains observable but requires the actual
+                # footprint, headroom and physical roof for review promotion.
+                if old and old['decision']=='review' and checks['two_cell_clearance'] and feet[ident]>=9 and f['roof']>=.35*max(1,f['top_boundary']) and volume<=50000 and mesh_ok:
+                    c['decision']=c['base_decision']='review'
+                    c['structure_class']='discovered_interior_review'
+            if ident in band_info:
+                c['structure_evidence']=band_info[ident]
+                c['reasons'].append('observed_floor_roof_band')
+                if mesh_ok and volume<=50000 and checks['two_cell_clearance'] and min(f['floor']/max(1,f['bottom_boundary']),f['roof']/max(1,f['top_boundary']))>=.65:
+                    c['decision']=c['base_decision']='review'
+                    c['structure_class']='supported_band_review'
         candidates.append(c)
-        if progress:progress(65+int(30*(number+1)/max(1,min(512,len(ordered)))),'복셀 외곽 메시·원본 대조')
+        if progress:progress(65+int(30*(number+1)/max(1,min(candidate_limit,len(ordered)))),'복셀 외곽 메시·원본 대조')
     by_label={c['virtual_boundary']['label']:c['id'] for c in candidates};portals=[]
     for (a,b),area in pairs.items():
         if a in by_label and b in by_label:portals.append({'spaces':[by_label[a],by_label[b]],'unit_faces':area,'kind':'virtual_partition','traversability':'uncertain','reason':'space segmentation is independent of movement connectivity'})
@@ -403,7 +463,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             c['space_class']=c['structure_class']
     for c in candidates:
         checkpoint(cancel)
-        if (c['decision']!='exclude' or c['structure_class']=='exposed_deck') and c['structure_class']!='unfinished_interior_review':
+        if (c['decision']!='exclude' or c['structure_class']=='exposed_deck') and c['structure_class'] not in ('unfinished_interior_review','supported_band_review','discovered_interior_review'):
             classify_sky(c,sky_fraction(c['volume_runs'],sky,bounds))
     for record in deck_complexes.values():
         for part in record['parts']:
@@ -415,11 +475,18 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         if progress:progress(95,'관측 외벽·갑판·개구부 및 부분 구획 분석')
         from .structure_review import analyse
         review = analyse(doc,bounds,hull,terrain,air,raw_exterior,domain,labels,candidates,progress,cancel,geometry=geometry)
+        if engine=='integrated':
+            from .structure_review import runs as discovery_runs
+            restored_runs=discovery_runs(legacy_only,bounds.lo,cancel)
+            review['layers']['restored_air']={'runs':restored_runs[:150000],'faces':[],
+                'count':int(legacy_only.sum()),'rows_omitted':max(0,len(restored_runs)-150000)}
         if engine!='legacy':
             review['manual_boundaries']=[m for m in marks if m['id'] in {a['id'] for a in applied}]
             for candidate,record in zip(candidates,review['spaces']):
                 candidate['structural_membership']=record['hull_membership']
                 candidate['structural_partition']=record['partition_status']
+                if engine=='integrated':
+                    candidate['space_facts']['membership']=record['hull_membership']
     result={'method':METHOD,'algorithm_version':ENGINES[engine],'engine_id':engine,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair,'structure_review':structure_review},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
     if structural:
         result['structural_generation']=structural

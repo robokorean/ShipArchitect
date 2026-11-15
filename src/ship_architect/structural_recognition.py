@@ -6,8 +6,8 @@ from .chunks import checkpoint
 from .spatial3d import next_seed
 from .structure_review import adjacent
 
-ENGINES = {'legacy':'0.9.3.4.1', 'structural':'0.9.3.7-structural', 'hybrid37':'0.9.3.7-hybrid', 'hybrid':'0.9.3.8-hybrid'}
-ENGINE_NAMES = {'legacy':'Legacy · v0.9.3.6', 'structural':'Structural · 구조', 'hybrid':'Hybrid · 0.9.3.8', 'hybrid37':'Hybrid · 0.9.3.7 비교용'}
+ENGINES = {'legacy':'0.9.3.4.1', 'structural':'0.9.3.7-structural', 'hybrid37':'0.9.3.7-hybrid', 'hybrid':'0.9.3.8-hybrid','integrated':'0.9.3.9-integrated'}
+ENGINE_NAMES = {'legacy':'Legacy · v0.9.3.6', 'structural':'Structural · 구조', 'hybrid':'Hybrid · 0.9.3.8', 'hybrid37':'Hybrid · 0.9.3.7 비교용', 'integrated':'통합 · 0.9.3.9'}
 
 
 @njit(cache=True, nogil=True)
@@ -75,7 +75,7 @@ def domain_from_structure(air, hull, raw, geometry, engine, cancel, *, graph=Non
     # Enclosed physical air stays reviewable even with an unusual substrate.
     domain = supported | enclosed
     supplemental = np.zeros(air.shape,bool)
-    if engine in ('hybrid','hybrid37'):
+    if engine in ('hybrid','hybrid37','integrated'):
         # Floor gaps and shafts are retained only near an actually supported
         # room and between opposed vertical supports. Limit growth at open ends.
         nearby = supported
@@ -93,7 +93,7 @@ def domain_from_structure(air, hull, raw, geometry, engine, cancel, *, graph=Non
     metrics = {'paired_floor_roof_cells':int(paired.sum()), 'supported_cells':int(supported.sum()),
                'observed_enclosed_cells':int(enclosed.sum()), 'supported_aperture_fringe_cells':int(supplemental.sum()),
                'unassigned_exterior_air_cells':int((raw&~domain).sum()),
-               'parameters':{'wall_sightline_max':64,'aperture_growth':2 if engine in ('hybrid','hybrid37') else 0,
+               'parameters':{'wall_sightline_max':64,'aperture_growth':2 if engine in ('hybrid','hybrid37','integrated') else 0,
                              'floor_step_seed_tolerance':2}}
     if graph is not None:
         # Tall walls on three sides can support a bounded unfinished room.
@@ -232,7 +232,7 @@ def label_domain(domain,anchor,edges,queue,progress,cancel,*,physical=None):
     return labels,label,counts
 
 
-def reserve_verified_partitions(reference, domain, air, bounds, cancel):
+def reserve_verified_partitions(reference, domain, air, bounds, cancel, *, narrow_seams=False):
     """Retain previously repaired, strongly supported narrow-seam candidates.
 
     Keep the original voxel runs only when strong physical floor/roof evidence
@@ -243,8 +243,12 @@ def reserve_verified_partitions(reference, domain, air, bounds, cancel):
     for c in reference['candidates']:
         checkpoint(cancel)
         profile = c['enclosure_profile']
+        contacts=c.get('boundary_contacts',{})
+        repaired='wide_partition_repaired' in c['reasons']
+        confirmed_geometry=(narrow_seams and 'large_merge_reanalysed' in c['reasons']
+                            and 0<contacts.get('air',0)<=.05*contacts.get('hull',0))
         if (c['decision'] != 'review' or c['structure_class'] != 'open_interior'
-                or 'wide_partition_repaired' not in c['reasons']
+                or not (repaired or confirmed_geometry)
                 or min(profile['floor_fraction'],profile['roof_fraction'])<.97
                 or profile['lateral_open_faces'] or c.get('sky_open_column_fraction',1)>.02
                 or not c['validation']['mesh_volume_matches_voxels']
@@ -447,3 +451,118 @@ def refine_large(labels, domain, raw, deck, manual, bounds, queue, cancel):
             break
         samples.append(result)
     return maximum,samples
+
+
+def legacy_volume(reference, shape, bounds, air, cancel):
+    """Decode discovery runs into a compact source label field."""
+    sources=np.zeros(shape,np.int32)
+    stats={}
+    x0,y0,z0=bounds.lo
+    for ident,candidate in enumerate(reference['candidates'],1):
+        checkpoint(cancel)
+        stats[ident]=candidate
+        for y,z,a,b in candidate['volume_runs']:
+            row=np.s_[y-y0,z-z0,a-x0:b-x0+1]
+            region=sources[row]
+            region[(region==0)&air[row]]=ident
+    return sources,stats
+
+
+def label_remaining(mask, edges, queue, cancel, source=None):
+    """Exact connected parts with shared discovery source and manual boundaries."""
+    if source is not None:
+        edges=edges.copy()
+        for axis in range(3):
+            checkpoint(cancel)
+            low=[slice(None)]*3
+            high=low.copy()
+            low[axis]=slice(None,-1)
+            high[axis]=slice(1,None)
+            low,high=tuple(low),tuple(high)
+            border=mask[low]&mask[high]&(source[low]!=source[high])
+            edges[low] |= border.astype(np.uint8) << (axis*2+1)
+            edges[high] |= border.astype(np.uint8) << (axis*2)
+    h,d,w=mask.shape
+    labels=np.zeros(mask.shape,np.int32)
+    flat=labels.ravel()
+    allowed=mask.ravel()
+    blocked=edges.ravel()
+    empty=np.full(mask.size,-1,np.int16)
+    ident=0
+    start=0
+    while True:
+        checkpoint(cancel)
+        seed=next_seed(allowed,flat,start)
+        if seed<0:
+            return labels,ident
+        start=seed+1
+        ident+=1
+        flat[seed]=ident
+        queue[0]=seed
+        head,tail=0,1
+        while head<tail:
+            checkpoint(cancel)
+            head,tail=walk(allowed,flat,queue,head,tail,w,d,h,empty,blocked,False)
+
+
+def supported_bands(labels, maximum, domain, hull, geometry, edges, queue, bounds, skip, cancel):
+    """Extract local connected volumes between measured floor/roof pairs.
+
+    Extraction is restricted to large unverified labels and unclaimed empty
+    cells. A vertical opening stays in the residual unless it actually has
+    the same observed floor and roof. No full horizontal cap is introduced.
+    """
+    floor,roof,deck=column_support(hull,geometry[4],geometry[5])
+    sizes=np.bincount(labels.ravel())
+    evidence={}
+    for parent in np.flatnonzero(sizes>=40000):
+        if not parent or parent in skip:
+            continue
+        checkpoint(cancel)
+        original=labels==parent
+        height=np.flatnonzero(original.any(axis=(1,2)))
+        if len(height)<10:
+            continue
+        paired=original&deck&(roof-floor>=4)&(roof-floor<=28)
+        keys,counts=np.unique(np.stack([floor[paired],roof[paired]],axis=1),axis=0,return_counts=True)
+        options=sorted(zip(keys.tolist(),counts.tolist()),key=lambda kv:(-kv[1],kv[0]))
+        for (bottom,top),volume in options[:5]:
+            if volume<max(1300,.10*sizes[parent]) or len(height)<top-bottom+3:
+                continue
+            section=np.s_[bottom+1:top]
+            available=domain[section]&((labels[section]==parent)|(labels[section]==0))
+            matching=available&(floor[section]==bottom)&(roof[section]==top)
+            groups,count=label_remaining(matching,edges[section],queue,cancel)
+            parent_values=groups[labels[section]==parent]
+            shared=np.bincount(parent_values,minlength=count+1)
+            areas=np.bincount(groups.ravel(),minlength=count+1)
+            for part in np.flatnonzero(shared>=max(950,int(.085*sizes[parent]))):
+                if not part or shared[part]<areas[part]*.30:
+                    continue
+                selected=groups==part
+                footprint=selected.any(axis=0)
+                if int(footprint.sum())<180:
+                    continue
+                # The actual deck footprint must support most of this part.
+                contacts=int((footprint&geometry[5][bottom]).sum())
+                if contacts<.52*footprint.sum():
+                    continue
+                maximum+=1
+                labels[section][selected]=maximum
+                evidence[maximum]={
+                    'source_label':int(parent),'floor_y':bottom+bounds.lo[1],
+                    'roof_y':top+bounds.lo[1],'floor_plate_columns':contacts,
+                    'paired_columns':int(footprint.sum()),'source_cells':int(shared[part]),
+                    'cells':int(areas[part]),'boundary':'virtual_at_change_in_observed_pair',
+                    'confidence':'review',
+                }
+    # Extraction may disconnect the remaining air. Preserve each connected
+    # residual rather than calling it a single room across the band.
+    for parent in sorted({e['source_label'] for e in evidence.values()}):
+        checkpoint(cancel)
+        remainder=labels==parent
+        parts,count=label_remaining(remainder,edges,queue,cancel)
+        if count>1:
+            labels[remainder]=parts[remainder]+maximum
+            maximum+=count
+    return maximum,evidence

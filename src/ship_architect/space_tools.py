@@ -13,7 +13,7 @@ class SpaceTools(QObject):
         self.panel=QWidget();form=QFormLayout(self.panel);self.normal=QSlider(Qt.Orientation.Horizontal);self.normal.setRange(0,255);self.candidate=QSlider(Qt.Orientation.Horizontal);self.candidate.setRange(0,255);self.geometry=QComboBox();self.geometry.addItems(['실제 복셀 메시','보조 경계 상자']);self.only=QCheckBox('선택 공간 오버레이만');self.show_external=QCheckBox('외부·큰 미분리 영역 표시')
         self.mode=QComboBox()
         for label,key in (('확정 공간 + 후보','both'),('확정 공간만','confirmed'),
-                          ('신규 후보만','candidates'),('변경 후보만','changed'),('모든 오버레이 숨김','none')):
+                          ('신규 후보만','candidates'),('변경 후보만','changed'),('복원된 탐색 공간','recovered'),('미확정·제외 후보','uncertain'),('모든 오버레이 숨김','none')):
             self.mode.addItem(label,key)
         self.mode.currentIndexChanged.connect(self.update)
         form.addRow('표시 대상',self.mode)

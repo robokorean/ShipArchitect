@@ -5,18 +5,19 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QComboBox,QCheckBox,QLabel,QAbstractItemView
 from .model import Bounds
 from .spatial3d import recognize_3d,partial_bounds,intersects
-from .analysis_state import commit,apply_rules,register,crop,compare
+from .analysis_state import MAX_ANALYSIS_CANDIDATES,commit,apply_rules,register,crop,compare
 from .diagnostics import event
 
 REASONS={'exterior_envelope_unresolved':'외부 외형·큰 미분리 영역 (기본 숨김)','large_merge_reanalysed':'대형 연결 후보 재분할·검토','possible_merged_space':'여러 공간 합쳐짐 가능·미해결','virtual_exterior_opening':'외부 연결·가상 개구 경계','virtual_room_partition':'가상 방 분리·통행 별도 검토','source_collision_repaired':'원본 충돌 셀 제외·검토','mesh_volume_mismatch':'메시/복셀 부피 불일치','mesh_budget_exceeded':'정밀 메시 표시 예산 초과','narrow_opening_partition':'좁은 개구부 분할 추정·수동 검토','analysis_limit':'분석 한도 초과','scope_or_exterior_open':'선택 경계·외부와 연결','ceiling_slit_no_headroom':'천장 틈·머리 공간 부족','no_usable_floor':'사용 가능한 바닥 부족','narrow_wall_gap_or_corridor':'좁은 벽 틈·통로 구분 필요','uncertain_block_boundary':'불확실한 블록 경계','closed_supported_volume':'닫힌 부피·지지 바닥 확인','existing_space_overlap_protected':'기존 공간과 겹침·보호','user_boundary_crop':'사용자 경계 보정','protected_user_decision':'사용자 판단 보호','user_exclusion_rule':'사용자 제외 규칙'}
 
 CLASS_NAMES = {
+    'supported_band_review':'갑판 사이 공간 검토', 'discovered_interior_review':'복원된 내부 후보',
     'unfinished_interior_review':'미완성 내부 검토', 'closed_interior':'폐쇄형 내부', 'open_interior':'개방형 내부 후보',
     'hangar_or_large_opening':'넓은 개구부 후보', 'exposed_deck':'노출 갑판 후보',
     'unresolved_deck_group':'미해결 갑판 구역', 'vertical_connection_review':'수직 연결 검토',
     'sky_exposed':'하늘에 열린 외부 공간', 'exterior_air':'외부 공기', 'unresolved_exterior_merge':'미해결 외부 연결', 'uncertain':'불확실',
 }
-REASONS.update(local_deck_aperture_split='국소 갑판 개구부로 분리 · 통행은 별도', missing_roof_tall_wall_support='지붕 미완성 · 갑판과 높은 벽 지지', local_structural_partition='국소 구조 지지 기반 분할', validated_baseline_partition='실제 바닥·천장 지지로 보존한 기존 경계', sky_exposed_not_enclosed='하늘에 열린 공기 · 실내 등록 제외', wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
+REASONS.update(observed_floor_roof_band='실제 바닥·천장 쌍으로 국소 구획', legacy_discovery_restored='넓은 탐색에서 복원한 실제 공기', local_deck_aperture_split='국소 갑판 개구부로 분리 · 통행은 별도', missing_roof_tall_wall_support='지붕 미완성 · 갑판과 높은 벽 지지', local_structural_partition='국소 구조 지지 기반 분할', validated_baseline_partition='실제 바닥·천장 지지로 보존한 기존 경계', sky_exposed_not_enclosed='하늘에 열린 공기 · 실내 등록 제외', wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
 
 class SpatialBatch:
     def __init__(self,panel):
@@ -55,7 +56,7 @@ class SpatialBatch:
                 for c in copies:
                     if not intersects(Bounds(tuple(c['lo']),tuple(c['hi'])),b):c['source_block_epoch']=d.block_epoch
                 r['candidates']+=copies
-                r['candidates']=r['candidates'][:512]
+                r['candidates']=r['candidates'][:MAX_ANALYSIS_CANDIDATES if key=='integrated' else 512]
             from .analysis_sessions import provenance
             r['provenance']=provenance(d,r['method'],'partial' if partial else 'scope_scan',r)
             prepared=register(d,r,True) if auto else (d.spaces,r,[])

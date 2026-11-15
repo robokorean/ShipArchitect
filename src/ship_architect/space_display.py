@@ -17,17 +17,20 @@ def external(space,doc):
 def visible(view,space,candidate=False):
     cfg=config(view)
     mode=cfg.get('mode','both')
-    if mode=='none' or (candidate and mode=='confirmed') or (not candidate and mode in ('candidates','changed')):
+    if mode=='none' or (candidate and mode=='confirmed') or (not candidate and mode in ('candidates','changed','recovered','uncertain')):
         return False
     if candidate and mode=='changed':
         if space['id'] not in getattr(view,'changed_candidate_ids',set()):
             return False
-    if candidate and space.get('decision')=='exclude' and not cfg.get('external',False):
+    if candidate and mode=='recovered' and not space.get('discovery',{}).get('legacy_only_cells'):return False
+    if candidate and mode=='uncertain' and space.get('decision') not in ('review','exclude'):return False
+    inspect_mode=mode in ('recovered','uncertain')
+    if candidate and space.get('decision')=='exclude' and not cfg.get('external',False) and not inspect_mode:
         return False
     if candidate and not cfg.get('show_candidates',True):return False
     overrides=cfg.get('visibility',{})
     if not overrides.get(space['id'],space.get('visible',True)):return False
-    if not cfg.get('external',False) and external(space,view.doc):return False
+    if not cfg.get('external',False) and not inspect_mode and external(space,view.doc):return False
     if cfg.get('only_selected') and not candidate and space['id']!=view.doc.active_space_id:return False
     return True
 

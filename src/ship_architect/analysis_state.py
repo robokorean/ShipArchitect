@@ -4,6 +4,7 @@ from .model import Bounds
 from .space_model import normalize,new_space,bbox
 from .spatial3d import fingerprint,intersects
 METHODS=('3d_air_components','exterior_voxel_mesh')
+MAX_ANALYSIS_CANDIDATES=3072
 EQUIPMENT_TYPES=('Create','ComputerCraft','추진 설비 후보','전력 설비 후보','장식용 블록','미분류 모드 블록')
 
 def validate(value,size):
@@ -25,7 +26,7 @@ def validate(value,size):
         raise ValueError('병합 거부 기록 형식 오류')
     last=state.get('last_result')
     if last is not None:
-        if last.get('method') not in METHODS or len(last.get('candidates',[]))>512:raise ValueError('3D 분석 복원 오류')
+        if last.get('method') not in METHODS or len(last.get('candidates',[]))>MAX_ANALYSIS_CANDIDATES:raise ValueError('3D 분석 복원 오류')
         count=0
         for c in last.get('candidates',[]):
             c['volume_runs']=normalize(c.get('volume_runs',[]),size);count+=len(c['volume_runs'])
@@ -50,7 +51,7 @@ def validate(value,size):
         else:
             validate({'last_result':reference},size)
     changes=state.get('session_changes',[])
-    if not isinstance(changes,list) or len(changes)>1024:
+    if not isinstance(changes,list) or len(changes)>2*MAX_ANALYSIS_CANDIDATES:
         raise ValueError('비교 변경 목록 형식 오류')
     comparison=state.get('comparison')
     if comparison is not None:
@@ -112,6 +113,9 @@ def register(doc,result,automatic=True,ids=None):
     for c in candidates:
         if ids is not None and c['id'] not in ids:continue
         if c.get('decision')=='registered':continue
+        if c.get('space_facts',{}).get('usability')=='restricted':
+            if automatic:continue
+            raise ValueError('머리 공간이 부족한 빈 공간입니다. 일반 공간으로 등록할 수 없습니다.')
         if c.get('space_class') in ('exterior_or_merged','exterior_air','sky_exposed','exposed_deck'):
             if automatic:continue
             raise ValueError('외부 공기/큰 미분리 후보는 방으로 등록하지 않습니다. 작은 경계로 보정하거나 재분석하세요.')

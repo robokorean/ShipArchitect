@@ -1,3 +1,10 @@
+# v0.9.3.9
+
+- Add a fused detection engine with exact Legacy-only, shared and Hybrid-only voxel provenance.
+- Preserve distinct spaces between local observed deck and roof pairs and keep residual partial-deck openings reviewable.
+- Retain thin and uncertain discoveries with independent inspection filters, occupancy and usage evidence.
+- Keep prior engines selectable and the Windows CMD/Pythonw launch paths.
+
 # v0.9.3.8
 
 - Keep physical deck ownership constraints during Hybrid seed expansion and test large unresolved candidates at structure-supported aperture boundaries.
