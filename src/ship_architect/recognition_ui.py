@@ -8,10 +8,18 @@ from .recognition_compare import compare_methods
 from .voxel_mesh import indexed_mesh,obj_bytes
 from .schematic import atomic_write
 from .model import Bounds
+from .structural_recognition import ENGINE_NAMES
+from .preferences import settings
 
 class RecognitionTools:
     def __init__(self,batch):
-        self.batch=batch;self.w=batch.owner;p=batch.panel;row=QHBoxLayout();self.mode=QComboBox();self.mode.addItems(['기존 3D 인식 (v0.9.3)','외관 복셀·메시 인식 (시험)']);self.mode.setToolTip('실제 블록/NBT를 변경하지 않고 서로 다른 인식을 선택합니다.');row.addWidget(self.mode)
+        self.batch=batch;self.w=batch.owner;p=batch.panel;row=QHBoxLayout();self.mode=QComboBox();self.mode.addItem('기존 3D 인식 · 0.9.3','3d_air_components')
+        for key,name in ENGINE_NAMES.items():self.mode.addItem(name,key)
+        self.preferences=settings(self.w.data_dir)
+        saved=self.mode.findData(self.preferences.value('analysis/engine','legacy'))
+        self.mode.setCurrentIndex(saved if saved>=0 else self.mode.findData('legacy'))
+        self.mode.currentIndexChanged.connect(self.save_engine)
+        self.mode.setToolTip('실제 블록/NBT를 변경하지 않고 서로 다른 인식을 선택합니다.');row.addWidget(self.mode)
         for text,fn in [('두 방식 전체 비교',self.compare),('기존 비교 결과',lambda:self.show('old')),('신규 비교 결과',lambda:self.show('new')),('선택 경계 겹쳐 보기',self.overlay),('선택 메시 OBJ 내보내기',self.export)]:
             b=QPushButton(text);b.clicked.connect(fn);row.addWidget(b)
         p.layout().insertLayout(0,row)
@@ -36,11 +44,22 @@ class RecognitionTools:
         for key in ('session_reference','session_changes','session_side'):
             state.pop(key,None)
 
+    def save_engine(self,*_):
+        self.preferences.setValue('analysis/engine',self.mode.currentData())
+        self.preferences.sync()
+
+    def bind_engine(self,selector):
+        for index in range(self.mode.count()):
+            selector.addItem(self.mode.itemText(index),self.mode.itemData(index))
+        selector.setCurrentIndex(self.mode.currentIndex())
+        self.mode.currentIndexChanged.connect(selector.setCurrentIndex)
+        selector.currentIndexChanged.connect(self.mode.setCurrentIndex)
+
     def engine(self):
-        if self.mode.currentIndex()!=1:
+        if self.mode.currentData()=='3d_air_components':
             return recognize_3d
         from functools import partial
-        return partial(recognize_exterior,ignore_terrain=self.ignore_terrain.isChecked())
+        return partial(recognize_exterior,ignore_terrain=self.ignore_terrain.isChecked(),engine=self.mode.currentData())
 
     def partition(self):
         chosen=self.batch.selected()
@@ -76,8 +95,7 @@ class RecognitionTools:
         keys={':'.join(r['source_fingerprints']) for r in records}
         state['partition_rejections']=sorted(set(state.get('partition_rejections',[]))|keys)
         commit(d,state,action='reject_partition')
-        self.mode.setCurrentIndex(1)
-        self.batch.scan(scope=Bounds(tuple(scope['lo']),tuple(scope['hi'])))
+        self.batch.scan(scope=Bounds(tuple(scope['lo']),tuple(scope['hi'])),engine_override='legacy')
 
     def export_json(self):
         w=self.w
@@ -100,7 +118,7 @@ class RecognitionTools:
         b=Bounds((0,0,0),tuple(n-1 for n in d.schematic.size));revision=d.revision
         def done(result):
             if w.doc is not d or d.revision!=revision:return
-            state=copy.deepcopy(d.analysis_state);state['comparison']=result;state['last_result']=apply_rules(result['new'],state,d.schematic.size);self.clear_session(state);commit(d,state,action='recognition_comparison');self.mode.setCurrentIndex(1);self.batch.attach();w.refresh_history();w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
+            state=copy.deepcopy(d.analysis_state);state['comparison']=result;state['last_result']=apply_rules(result['new'],state,d.schematic.size);self.clear_session(state);commit(d,state,action='recognition_comparison');self.batch.attach();w.refresh_history();w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
             self.batch.panel.status.setText(f"비교 완료 · 기존 {len(result['old']['candidates'])}개/{result['old']['elapsed_seconds']:.2f}초 · 신규 {len(result['new']['candidates'])}개/{result['new']['elapsed_seconds']:.2f}초. IoU는 정답률이 아닙니다. 미등록 비교 결과입니다.")
             self.batch.panel.text.setPlainText(json.dumps({k:v for k,v in result.items() if k not in ('old','new')},ensure_ascii=False,indent=2))
         ignore_terrain=self.ignore_terrain.isChecked()
@@ -110,7 +128,7 @@ class RecognitionTools:
             d=self.w.doc;r=d.analysis_state.get('comparison')
             if not r:raise ValueError('두 방식 전체 비교를 먼저 실행하세요.')
             if r['block_epoch']!=d.block_epoch:raise ValueError('블록 변경 뒤 비교 결과가 오래되었습니다. 다시 비교하세요.')
-            state=copy.deepcopy(d.analysis_state);state['last_result']=apply_rules(r[which],state,d.schematic.size);self.clear_session(state);commit(d,state,action='recognition_comparison_show');self.mode.setCurrentIndex(0 if which=='old' else 1);self.batch.attach();self.w.refresh_history()
+            state=copy.deepcopy(d.analysis_state);state['last_result']=apply_rules(r[which],state,d.schematic.size);self.clear_session(state);commit(d,state,action='recognition_comparison_show');self.batch.attach();self.w.refresh_history()
         except Exception as e:self.w.error(e)
     def overlay(self):
         try:

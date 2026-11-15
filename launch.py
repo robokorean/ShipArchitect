@@ -26,7 +26,8 @@ class Tee:
 
 
 def run_logged(command):
-    with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace') as child:
+    flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' and sys.executable.lower().endswith('pythonw.exe') else 0
+    with subprocess.Popen(command,creationflags=flags,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace') as child:
         for line in child.stdout:print(line,end='',flush=True)
         return child.wait()
 
@@ -48,14 +49,17 @@ def prepare(requirements, cache_root):
     marker=target/'.complete'
     if marker.is_file():
         return target
-    probe=run_logged([sys.executable,'-I','-m','pip','--version'])
+    python=Path(sys.executable)
+    if python.name.lower()=='pythonw.exe':
+        python=python.with_name('python.exe')
+    probe=run_logged([str(python),'-I','-m','pip','--version'])
     if probe:
         raise RuntimeError('Base Python has no working pip. Repair this Python installation with the pip option enabled, then retry.')
     target.parent.mkdir(parents=True,exist_ok=True)
     staging=Path(tempfile.mkdtemp(prefix='install-',dir=target.parent))
     try:
         print('Installing private Ship Architect packages:',target,flush=True)
-        result=run_logged([sys.executable,'-I','-m','pip','install','--disable-pip-version-check',
+        result=run_logged([str(python),'-I','-m','pip','install','--disable-pip-version-check',
             '--target',str(staging),'-r',str(requirements)])
         if result:
             raise RuntimeError('Package installation failed. See the pip error above.')
@@ -91,11 +95,19 @@ def main():
 
 if __name__=='__main__':
     log_path=Path(__file__).resolve().parent/'startup.log'
-    with log_path.open('w',encoding='utf-8') as log:
-        with contextlib.redirect_stdout(Tee(sys.stdout,log)),contextlib.redirect_stderr(Tee(sys.stderr,log)):
-            try:
-                status=main()
-            except Exception:
-                traceback.print_exc()
-                status=1
+    try:
+        with log_path.open('w',encoding='utf-8') as log:
+            with contextlib.redirect_stdout(Tee(sys.stdout,log)),contextlib.redirect_stderr(Tee(sys.stderr,log)):
+                try:
+                    status=main()
+                except Exception:
+                    traceback.print_exc()
+                    status=1
+    except OSError:
+        traceback.print_exc()
+        status=1
+    if status and os.name=='nt' and sys.stdout is None and '--check' not in sys.argv:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None,'Ship Architect 시작 실패.\n'+str(log_path),
+                                        'Ship Architect',0x10)
     raise SystemExit(status)

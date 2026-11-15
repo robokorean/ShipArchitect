@@ -37,16 +37,33 @@ w.doc.dirty=False;w.close();wait_for(lambda:not w.isVisible());out.write_text(js
 '''
 def verify(archive,output):
  Path(output).resolve().parent.mkdir(parents=True,exist_ok=True)
- with tempfile.TemporaryDirectory(prefix='ShipArchitect-clean-') as tmp:
+ with tempfile.TemporaryDirectory(prefix='ShipArchitect 새 폴더 ') as tmp:
   folder=Path(tmp)
   with zipfile.ZipFile(archive) as z:z.extractall(folder)
   root=folder/'ShipArchitect';runner=folder/'runner.py';runner.write_text(HARNESS);env=os.environ.copy();env['LOCALAPPDATA']=str(folder/'local_appdata');env.pop('PYTHONPATH',None);env['QT_QPA_PLATFORM']='offscreen';env['PYTHONNOUSERSITE']='1'
   # The original development source is physically unavailable during the run.
   source=Path(__file__).resolve().parents[1]/'src';quarantine=source.with_name('src_quarantined_for_release')
   source.rename(quarantine)
-  try:r=subprocess.run([sys.executable,'-I',str(runner),str(root),str(Path(output).resolve()),str(source.parent)],cwd=root,env=env,text=True,capture_output=True,timeout=240)
+  try:
+   assert not (root/'START_GUI.vbs').exists()
+   launcher=subprocess.run([sys.executable,'-I',str(root/'START_GUI.pyw'),'--check'],cwd=root,env=env,capture_output=True,timeout=240)
+   if launcher.returncode:raise RuntimeError((root/'startup.log').read_text(encoding='utf-8'))
+   if sys.platform=='win32':
+    cmd=subprocess.run([os.environ.get('COMSPEC','cmd.exe'),'/d','/c','START_WINDOWS.cmd','--check'],
+                       cwd=root,env=env,capture_output=True,timeout=240)
+    if cmd.returncode:raise RuntimeError(cmd.stderr.decode(errors='replace'))
+    windowed=Path(sys.executable).with_name('pythonw.exe')
+    assert windowed.is_file()
+    gui_env={**env,'LOCALAPPDATA':str(folder/'gui_first_launch')}
+    gui=subprocess.run([str(windowed),'-I',str(root/'START_GUI.pyw'),'--check'],cwd=root,env=gui_env,timeout=240)
+    if gui.returncode:raise RuntimeError((root/'startup.log').read_text(encoding='utf-8'))
+   r=subprocess.run([sys.executable,'-I',str(runner),str(root),str(Path(output).resolve()),str(source.parent)],cwd=root,env=env,text=True,capture_output=True,timeout=240)
   finally:quarantine.rename(source)
   if r.returncode:raise RuntimeError(r.stdout[-4000:]+'\n'+r.stderr[-6000:])
-  print(r.stdout[-3000:]);return json.loads(Path(output).read_text())
+  result=json.loads(Path(output).read_text())
+  result.update({'non_vbs_entry_check':True,'unicode_and_space_path':True,
+                 'windows_cmd_and_pythonw_check':sys.platform=='win32'})
+  Path(output).write_text(json.dumps(result,ensure_ascii=False,indent=2))
+  print(json.dumps(result));return result
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('archive',type=Path);p.add_argument('--output',type=Path,default=Path('distribution_check.json'));a=p.parse_args();verify(a.archive,a.output)

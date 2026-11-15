@@ -71,11 +71,15 @@ class AnalysisSessions:
         self.batch.panel.status.setText('저장된 확정 공간 표시 · 신규 분석 없음')
         self.describe()
 
-    def scan(self,keep_rules,*,engine='legacy',compare_legacy=False):
+    def scan(self,keep_rules,*,engine=None,compare_legacy=False):
         w=self.w
         if w.loading or w.operation is not None:
             return
         d=w.doc
+        engine=engine or self.batch.recognition.mode.currentData()
+        from .structural_recognition import ENGINES, ENGINE_NAMES
+        engine_label=ENGINE_NAMES.get(engine,'기존 3D · 0.9.3')
+        if engine in ENGINES:engine_label+=f' / {ENGINES[engine]}'
         revision=d.revision
         bounds=Bounds((0,0,0),tuple(n-1 for n in d.schematic.size))
         ignore_terrain=self.batch.recognition.ignore_terrain.isChecked()
@@ -93,7 +97,11 @@ class AnalysisSessions:
                 legacy=recognize_exterior(scan_doc,bounds,lambda n,s:progress(n//2,'Legacy · '+s),cancel,ignore_terrain=ignore_terrain)
                 legacy['provenance']=provenance(d,legacy['method'],mode,legacy)
             update=(lambda n,s:progress(50+n//2,s)) if compare_legacy else progress
-            result=recognize_exterior(scan_doc,bounds,update,cancel,ignore_terrain=ignore_terrain,engine=engine)
+            if engine=='3d_air_components':
+                from .spatial3d import recognize_3d
+                result=recognize_3d(scan_doc,bounds,update,cancel)
+            else:
+                result=recognize_exterior(scan_doc,bounds,update,cancel,ignore_terrain=ignore_terrain,engine=engine)
             checkpoint(cancel)
             result['provenance']=provenance(d,result['method'],mode,result)
             if keep_rules:
@@ -125,12 +133,12 @@ class AnalysisSessions:
             w.refresh_history()
             self.describe()
             summary={'reference_engine':baseline.get('engine_id',baseline.get('method')),
-                     'current_engine':result['engine_id'],'reference_seconds':baseline.get('elapsed_seconds'),
+                     'current_engine':result.get('engine_id',result['method']),'reference_seconds':baseline.get('elapsed_seconds'),
                      'current_seconds':result.get('elapsed_seconds'),'exact_cell_changes':changes}
             self.batch.panel.text.setPlainText(json.dumps(summary,ensure_ascii=False,indent=2))
 
         w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
-        w.run_operation(work,done,'현재 복셀에서 새 공간 계산')
+        w.run_operation(work,done,engine_label+' · '+mode+(' · Legacy 기준 비교' if compare_legacy else ''))
 
     def swap(self):
         w=self.w

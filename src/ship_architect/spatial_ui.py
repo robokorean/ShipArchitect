@@ -11,12 +11,12 @@ from .diagnostics import event
 REASONS={'exterior_envelope_unresolved':'외부 외형·큰 미분리 영역 (기본 숨김)','large_merge_reanalysed':'대형 연결 후보 재분할·검토','possible_merged_space':'여러 공간 합쳐짐 가능·미해결','virtual_exterior_opening':'외부 연결·가상 개구 경계','virtual_room_partition':'가상 방 분리·통행 별도 검토','source_collision_repaired':'원본 충돌 셀 제외·검토','mesh_volume_mismatch':'메시/복셀 부피 불일치','mesh_budget_exceeded':'정밀 메시 표시 예산 초과','narrow_opening_partition':'좁은 개구부 분할 추정·수동 검토','analysis_limit':'분석 한도 초과','scope_or_exterior_open':'선택 경계·외부와 연결','ceiling_slit_no_headroom':'천장 틈·머리 공간 부족','no_usable_floor':'사용 가능한 바닥 부족','narrow_wall_gap_or_corridor':'좁은 벽 틈·통로 구분 필요','uncertain_block_boundary':'불확실한 블록 경계','closed_supported_volume':'닫힌 부피·지지 바닥 확인','existing_space_overlap_protected':'기존 공간과 겹침·보호','user_boundary_crop':'사용자 경계 보정','protected_user_decision':'사용자 판단 보호','user_exclusion_rule':'사용자 제외 규칙'}
 
 CLASS_NAMES = {
-    'closed_interior':'폐쇄형 내부', 'open_interior':'개방형 내부 후보',
+    'unfinished_interior_review':'미완성 내부 검토', 'closed_interior':'폐쇄형 내부', 'open_interior':'개방형 내부 후보',
     'hangar_or_large_opening':'넓은 개구부 후보', 'exposed_deck':'노출 갑판 후보',
     'unresolved_deck_group':'미해결 갑판 구역', 'vertical_connection_review':'수직 연결 검토',
     'sky_exposed':'하늘에 열린 외부 공간', 'exterior_air':'외부 공기', 'unresolved_exterior_merge':'미해결 외부 연결', 'uncertain':'불확실',
 }
-REASONS.update(local_structural_partition='국소 구조 지지 기반 분할', validated_baseline_partition='실제 바닥·천장 지지로 보존한 기존 경계', sky_exposed_not_enclosed='하늘에 열린 공기 · 실내 등록 제외', wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
+REASONS.update(local_deck_aperture_split='국소 갑판 개구부로 분리 · 통행은 별도', missing_roof_tall_wall_support='지붕 미완성 · 갑판과 높은 벽 지지', local_structural_partition='국소 구조 지지 기반 분할', validated_baseline_partition='실제 바닥·천장 지지로 보존한 기존 경계', sky_exposed_not_enclosed='하늘에 열린 공기 · 실내 등록 제외', wide_partition_repaired='넓은 가상 경계 병합', unsupported_exterior='선체 바닥 지지 부족', exposed_deck='지붕이 없는 노출면')
 
 class SpatialBatch:
     def __init__(self,panel):
@@ -35,12 +35,18 @@ class SpatialBatch:
         self.sessions.filter.currentIndexChanged.connect(self.refresh)
     def selected(self):
         ids={i.data(Qt.ItemDataRole.UserRole) for i in self.panel.list.selectedItems()};return [c for c in self.owner.doc.space_candidates if c['id'] in ids]
-    def scan(self,auto=False,partial=False,whole=False,scope=None):
+    def scan(self,auto=False,partial=False,whole=False,scope=None,engine_override=None):
         w=self.owner;d=w.doc
         if w.operation is not None or w.loading:return
         b=scope or (partial_bounds(d) if partial else Bounds((0,0,0),tuple(n-1 for n in d.schematic.size)) if whole else d.selection)
         if b is None:self.panel.status.setText('변경 블록이 없습니다. 전체/선택 분석을 먼저 실행하세요.');return
-        state=copy.deepcopy(d.analysis_state);revision=d.revision;engine=self.recognition.engine() if self.recognition.mode.currentIndex()==1 else recognize_3d
+        from .structural_recognition import ENGINE_NAMES, ENGINES
+        from .exterior_recognition import recognize_exterior
+        from functools import partial as bind
+        key=engine_override or self.recognition.mode.currentData()
+        engine=(bind(recognize_exterior,engine=engine_override,ignore_terrain=self.recognition.ignore_terrain.isChecked())
+                if engine_override else self.recognition.engine())
+        state=copy.deepcopy(d.analysis_state);revision=d.revision
         def work(progress,cancel):
             r=engine(d,b,progress,cancel,partial);r=apply_rules(r,state,d.schematic.size)
             if partial:
@@ -51,7 +57,7 @@ class SpatialBatch:
                 r['candidates']+=copies
                 r['candidates']=r['candidates'][:512]
             from .analysis_sessions import provenance
-            r['provenance']=provenance(d,r['method'],'legacy_scan')
+            r['provenance']=provenance(d,r['method'],'partial' if partial else 'scope_scan',r)
             prepared=register(d,r,True) if auto else (d.spaces,r,[])
             return r,prepared
         def done(value):
@@ -65,13 +71,12 @@ class SpatialBatch:
             self.refresh();w.space_manager.refresh();w.refresh_history();self.sessions.describe();self.panel.status.setText(f'3D 완료 · 자동 등록 {len(added)}개 · '+str(dict(Counter(c['decision'] for c in r['candidates'])))+' · 블록 변경 없음')
             event('space_batch_committed',trace_id=r.get('trace_id'),registered=len(added),partial=partial,scope=r['scope'])
         if hasattr(w,'integrated_ui') and hasattr(w.integrated_ui,'tasks'):w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
-        w.run_operation(work,done,'3D 빈 공간 연결성·구조 검증')
+        w.run_operation(work,done,ENGINE_NAMES.get(key,'기존 3D')+' · '+ENGINES.get(key,'0.9.3')+(' · 변경 구역' if partial else ' · 공간 분석'))
     def receive(self,r,doc):
         if self.owner.doc is not doc or doc.revision!=r['revision']:return
         state=copy.deepcopy(doc.analysis_state);state['last_result']=r;commit(doc,state,action='space_analysis');self.result=r;self.refresh()
     def attach(self):
         self.result=self.owner.doc.analysis_state.get('last_result');self.panel.result=self.result
-        self.recognition.mode.setCurrentIndex(1 if self.result and self.result.get('method')=='exterior_voxel_mesh' else 0)
         if self.result:self.owner.doc.space_candidates=copy.deepcopy(self.result.get('candidates',[]));self.owner.doc.space_revision=self.owner.doc.revision
         self.refresh()
         self.sessions.describe()

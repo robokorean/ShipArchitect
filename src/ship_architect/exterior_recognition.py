@@ -49,7 +49,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     prior = state.get('last_result',{})
     marks = [] if prior.get('block_epoch')!=doc.block_epoch or prior.get('archive_read_only') or state.get('session_side')=='old' else prior.get('structure_review',{}).get('manual_boundaries',[])
     reference = None
-    if engine=='hybrid' and not marks and repair:
+    if engine in ('hybrid','hybrid37') and not marks and repair:
         original_progress = progress
         if original_progress:original_progress(0,'Hybrid · 보존 가능한 기존 구조 경계 확인')
         reference = scan(doc,bounds,(lambda n,s:original_progress(n//3,'Hybrid 기준 경계 · '+s)) if original_progress else None,
@@ -121,13 +121,29 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     else:
         if progress:progress(30,'원본 구조에서 바닥·천장·벽 근거 추출')
         from .structure_review import extract_geometry
-        from .structural_recognition import domain_from_structure,label_domain,manual_edges,reserve_verified_partitions
+        from .structural_recognition import domain_from_structure,label_domain,manual_edges,reserve_verified_partitions,support_edges,refine_large
         geometry = extract_geometry(doc,bounds,hull,air)
-        domain,anchor,structural = domain_from_structure(air,hull,raw_exterior,geometry,engine,cancel)
+        graph = {} if engine=='hybrid' else None
+        domain,anchor,structural = domain_from_structure(air,hull,raw_exterior,geometry,engine,cancel,graph=graph)
         edges,applied = manual_edges(domain.shape,bounds,marks,air)
         reserved = reserve_verified_partitions(reference,domain,air,bounds,cancel) if reference else []
         del reference
-        labels,k,counts = label_domain(domain,anchor,edges,queue,progress,cancel)
+        physical = None
+        if graph is not None:
+            physical,trace = support_edges(domain,anchor,graph.pop('deck_ids'),graph.pop('deck_records'),bounds,cancel)
+            structural.update(trace)
+        labels,k,counts = label_domain(domain,anchor,edges,queue,progress,cancel,physical=physical)
+        if graph is not None:
+            for seed_info in counts['seed_samples']:
+                local=seed_info.pop('local_xyz')
+                seed_info['xyz']=[a+b for a,b in zip(local,bounds.lo)]
+                seed_info['floor_y']=seed_info.pop('local_floor_y')+y0
+            # These are the same occupied surfaces used in prior structure review.
+            k,refinement=refine_large(labels,domain,raw_exterior,geometry[5],edges,bounds,queue,cancel)
+            structural['large_refinement']=refinement
+            unfinished_counts=np.bincount(labels[graph['unfinished']])
+            supported_pieces={j for item in refinement for j in item.get('new_labels',[])}
+        del physical,graph
         preserved = []
         preserved_labels = set()
         for key,volume,overlap,rows in reserved:
@@ -334,6 +350,16 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         if engine!='legacy' and raw_counts[ident] and volume>50000:
             c['decision']=c['base_decision']='exclude'
             c['structure_class']='unresolved_exterior_merge'
+        if engine=='hybrid':
+            if ident in supported_pieces:
+                c['reasons'].append('local_deck_aperture_split')
+            unfinished=int(unfinished_counts[ident]) if ident<len(unfinished_counts) else 0
+            c['unfinished_cells']=unfinished
+            if unfinished:
+                c['reasons'].append('missing_roof_tall_wall_support')
+            if unfinished>=max(12,volume//4) and volume<=50000 and mesh_ok:
+                c['decision']=c['base_decision']='review'
+                c['structure_class']='unfinished_interior_review'
         candidates.append(c)
         if progress:progress(65+int(30*(number+1)/max(1,min(512,len(ordered)))),'복셀 외곽 메시·원본 대조')
     by_label={c['virtual_boundary']['label']:c['id'] for c in candidates};portals=[]
@@ -346,6 +372,8 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         neighbours[b].append({'id':a,'unit_faces':portal['unit_faces']})
     for candidate in candidates:
         candidate['adjacent_spaces']=neighbours[candidate['id']]
+    for item in structural.get('large_refinement',[]):
+        item['result_ids']=[by_label.get(i) for i in item.get('new_labels',[])]
     for item in partition_decisions:
         item['result_ids']=[by_label.get(i) for i in item['result_labels']]
     # Door/steps are semantic evidence; their actual game collision is not guessed.
@@ -375,7 +403,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             c['space_class']=c['structure_class']
     for c in candidates:
         checkpoint(cancel)
-        if c['decision']!='exclude' or c['structure_class']=='exposed_deck':
+        if (c['decision']!='exclude' or c['structure_class']=='exposed_deck') and c['structure_class']!='unfinished_interior_review':
             classify_sky(c,sky_fraction(c['volume_runs'],sky,bounds))
     for record in deck_complexes.values():
         for part in record['parts']:

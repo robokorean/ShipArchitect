@@ -1,3 +1,10 @@
+# v0.9.3.8
+
+- Keep physical deck ownership constraints during Hybrid seed expansion and test large unresolved candidates at structure-supported aperture boundaries.
+- Retain bounded probable unfinished interiors for review and preserve validated Legacy boundaries, exact voxel geometry and separate physical-air connectivity.
+- Share the persisted analysis engine between both panels. Retain the prior Hybrid for comparison, along with Structural and Legacy.
+- Replace the VBS entry with a regular Windows command and an optional Python windowed entry. Keep private dependency installation and startup logging.
+
 # v0.9.3.7
 
 - Structural recognition derives candidate air and floor-anchored partitions from local geometry before room labelling.

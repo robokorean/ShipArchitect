@@ -231,6 +231,8 @@ def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, pr
             item['classification']='open_interior'
         elif cls in ('sky_exposed','exposed_deck'):
             item['classification']='exposed_facility'
+        elif cls=='unfinished_interior_review':
+            item['classification']='unpartitioned_interior'
         elif cls=='exterior_air':
             item['classification']='exterior_air'
         else:

@@ -39,8 +39,7 @@ class StructureReview(QWidget):
         self.visible = set()
         layout = QVBoxLayout(self)
         self.engine = QComboBox()
-        for key,label in ENGINE_NAMES.items():
-            self.engine.addItem(label,key)
+        owner.space_view.bulk.recognition.bind_engine(self.engine)
         self.engine.setToolTip('Legacy와 같은 설계도에서 구조 기반 두 엔진을 비교할 수 있습니다.')
         layout.addWidget(self.engine)
         commands = QHBoxLayout()
@@ -112,7 +111,7 @@ class StructureReview(QWidget):
         layout.addWidget(self.details,1)
 
     def scan(self):
-        self.owner.space_view.bulk.sessions.scan(True,engine=self.engine.currentData())
+        self.owner.space_view.bulk.sessions.scan(True)
 
     def compare(self):
         engine=self.engine.currentData()
@@ -189,7 +188,7 @@ class StructureReview(QWidget):
             summary='현재 블록과 다른 구조 분석입니다. 신규 분석으로 갱신하세요.'
         else:
             self.sync_selected_candidate()
-            summary=f"{ENGINE_NAMES.get(result.get('engine_id'),'Legacy')} · 분석 범위 {review['scope']['lo']} → {review['scope']['hi']} · {len(self.records)} 후보. 관측면은 채움, 추정면은 점선입니다. 3D는 조밀한 면을 샘플링합니다."
+            summary=f"{result.get('engine_id','legacy')} / {result.get('algorithm_version','?')} · 분석 범위 {review['scope']['lo']} → {review['scope']['hi']} · {len(self.records)} 후보. 관측면은 채움, 추정면은 점선입니다. 3D는 조밀한 면을 샘플링합니다."
         self.status.setText(summary+f' 기본 숨김 {len(hidden)}개는 제외 판정 또는 대형·외부 후보입니다.')
         self.redraw()
 
