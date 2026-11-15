@@ -16,6 +16,7 @@ from .display import visible_space_runs
 from .model import Bounds
 from .space_display import external
 from .structure_review import LAYERS
+from .structural_recognition import ENGINE_NAMES
 
 ROLE = Qt.ItemDataRole.UserRole
 AIR = {'external_air', 'interior'}
@@ -37,8 +38,13 @@ class StructureReview(QWidget):
         self._plane_cache = OrderedDict()
         self.visible = set()
         layout = QVBoxLayout(self)
+        self.engine = QComboBox()
+        for key,label in ENGINE_NAMES.items():
+            self.engine.addItem(label,key)
+        self.engine.setToolTip('Legacy와 같은 설계도에서 구조 기반 두 엔진을 비교할 수 있습니다.')
+        layout.addWidget(self.engine)
         commands = QHBoxLayout()
-        for label, callback in [('신규 구조 분석', self.scan), ('공통 도면', lambda: owner.integrated_ui.open_drawing())]:
+        for label, callback in [('신규 구조 분석', self.scan), ('Legacy와 비교', self.compare), ('공통 도면', lambda: owner.integrated_ui.open_drawing())]:
             button = QPushButton(label)
             button.clicked.connect(callback)
             commands.addWidget(button)
@@ -106,7 +112,14 @@ class StructureReview(QWidget):
         layout.addWidget(self.details,1)
 
     def scan(self):
-        self.owner.space_view.bulk.sessions.scan(True)
+        self.owner.space_view.bulk.sessions.scan(True,engine=self.engine.currentData())
+
+    def compare(self):
+        engine=self.engine.currentData()
+        if engine=='legacy':
+            self.status.setText('Structural 또는 Hybrid를 선택한 뒤 Legacy와 비교하세요.')
+            return
+        self.owner.space_view.bulk.sessions.scan(True,engine=engine,compare_legacy=True)
 
     def attach(self):
         doc = self.owner.doc
@@ -176,7 +189,7 @@ class StructureReview(QWidget):
             summary='현재 블록과 다른 구조 분석입니다. 신규 분석으로 갱신하세요.'
         else:
             self.sync_selected_candidate()
-            summary=f"분석 범위 {review['scope']['lo']} → {review['scope']['hi']} · {len(self.records)} 후보. 관측면은 채움, 추정면은 점선입니다. 3D는 조밀한 면을 샘플링합니다."
+            summary=f"{ENGINE_NAMES.get(result.get('engine_id'),'Legacy')} · 분석 범위 {review['scope']['lo']} → {review['scope']['hi']} · {len(self.records)} 후보. 관측면은 채움, 추정면은 점선입니다. 3D는 조밀한 면을 샘플링합니다."
         self.status.setText(summary+f' 기본 숨김 {len(hidden)}개는 제외 판정 또는 대형·외부 후보입니다.')
         self.redraw()
 

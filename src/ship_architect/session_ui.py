@@ -71,7 +71,7 @@ class AnalysisSessions:
         self.batch.panel.status.setText('저장된 확정 공간 표시 · 신규 분석 없음')
         self.describe()
 
-    def scan(self,keep_rules):
+    def scan(self,keep_rules,*,engine='legacy',compare_legacy=False):
         w=self.w
         if w.loading or w.operation is not None:
             return
@@ -88,12 +88,17 @@ class AnalysisSessions:
             from .chunks import checkpoint
             # No saved candidate arrays, user decisions, or analysis caches enter the clean engine.
             scan_doc=d if keep_rules else SimpleNamespace(schematic=d.schematic,block_epoch=d.block_epoch,revision=d.revision,spaces=[],analysis_state={})
-            result=recognize_exterior(scan_doc,bounds,progress,cancel,ignore_terrain=ignore_terrain)
+            legacy=None
+            if compare_legacy:
+                legacy=recognize_exterior(scan_doc,bounds,lambda n,s:progress(n//2,'Legacy · '+s),cancel,ignore_terrain=ignore_terrain)
+                legacy['provenance']=provenance(d,legacy['method'],mode,legacy)
+            update=(lambda n,s:progress(50+n//2,s)) if compare_legacy else progress
+            result=recognize_exterior(scan_doc,bounds,update,cancel,ignore_terrain=ignore_terrain,engine=engine)
             checkpoint(cancel)
-            result['provenance']=provenance(d,result['method'],mode)
+            result['provenance']=provenance(d,result['method'],mode,result)
             if keep_rules:
                 result=apply_rules(result,state,d.schematic.size)
-            baseline=prior or {'method':'saved_spaces','candidates':saved}
+            baseline=legacy or prior or {'method':'saved_spaces','candidates':saved}
             changes=compare_candidates(baseline['candidates'],result['candidates'],cancel)
             return result,baseline,changes
 
@@ -103,7 +108,11 @@ class AnalysisSessions:
             result,baseline,changes=value
             # Preserve even an empty saved snapshot; never apply candidate geometry here.
             state['last_result']=result
-            state['session_reference']=baseline
+            # The reference view only needs exact candidates, source identity and timing.
+            # Avoid storing two copies of dense diagnostic face data in project history.
+            state['session_reference']={k:v for k,v in baseline.items() if k in (
+                'method','algorithm_version','engine_id','scope','candidates','elapsed_seconds',
+                'provenance','revision','block_epoch','counts','archive_read_only')} if compare_legacy else baseline
             state['session_changes']=changes
             state['session_side']='new'
             commit(d,state,action='recognition_'+mode)
@@ -115,7 +124,10 @@ class AnalysisSessions:
             self.batch.attach()
             w.refresh_history()
             self.describe()
-            self.batch.panel.text.setPlainText(json.dumps(changes,ensure_ascii=False,indent=2))
+            summary={'reference_engine':baseline.get('engine_id',baseline.get('method')),
+                     'current_engine':result['engine_id'],'reference_seconds':baseline.get('elapsed_seconds'),
+                     'current_seconds':result.get('elapsed_seconds'),'exact_cell_changes':changes}
+            self.batch.panel.text.setPlainText(json.dumps(summary,ensure_ascii=False,indent=2))
 
         w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
         w.run_operation(work,done,'현재 복셀에서 새 공간 계산')

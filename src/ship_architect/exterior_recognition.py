@@ -12,7 +12,7 @@ from .spatial3d import next_seed,flood_step,fingerprint,MAX_VOLUME
 from .space_model import bbox
 from .diagnostics import evidence
 from .voxel_mesh import indexed_mesh,summary,validate_boundary
-from .exterior_structure import ALGORITHM_VERSION, terrain_mask, repair_partitions, exposure_class, split_deck_complexes
+from .exterior_structure import terrain_mask, repair_partitions, exposure_class, split_deck_complexes
 METHOD='exterior_voxel_mesh'
 
 @njit(cache=True,nogil=True)
@@ -39,9 +39,23 @@ def components(allowed,queue,cancel,progress=None):
         start=seed+1
     return labels,k
 
-def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True,structure_review=True):
+def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=True,repair=True,structure_review=True,engine='legacy'):
     started=time.perf_counter();bounds.validate(doc.schematic.size)
     if bounds.volume>MAX_VOLUME:raise ValueError('외관 기반 분석도 한 번에 800만 셀 이하로 선택하세요.')
+    from .structural_recognition import ENGINES
+    if engine not in ENGINES:
+        raise ValueError(f'지원하지 않는 공간 인식 엔진: {engine}')
+    state = getattr(doc,'analysis_state',{})
+    prior = state.get('last_result',{})
+    marks = [] if prior.get('block_epoch')!=doc.block_epoch or prior.get('archive_read_only') or state.get('session_side')=='old' else prior.get('structure_review',{}).get('manual_boundaries',[])
+    reference = None
+    if engine=='hybrid' and not marks and repair:
+        original_progress = progress
+        if original_progress:original_progress(0,'Hybrid · 보존 가능한 기존 구조 경계 확인')
+        reference = scan(doc,bounds,(lambda n,s:original_progress(n//3,'Hybrid 기준 경계 · '+s)) if original_progress else None,
+                         cancel,partial,ignore_terrain=ignore_terrain,repair=True,structure_review=False)
+        if original_progress:
+            progress=lambda n,s:original_progress(34+n*66//100,s)
     sc=doc.schematic;x0,y0,z0=bounds.lo;X,Y,Z=bounds.hi;H,L,W=Y-y0+1,Z-z0+1,X-x0+1
     solid=np.zeros((H,L,W),bool);epoch=doc.block_epoch;revision=doc.revision
     boxes=list(regions(sc.blocks.shape,bounds))
@@ -79,33 +93,60 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
                         if not row[a]:continue
                         if len(shell_runs)<50000:shell_runs.append([axis,-sign,y+y0,z+z0,int(a)+x0,int(b-1)+x0])
                         else:shell_runs_omitted+=1
-    # Directional silhouettes. Floor+ceiling and at least one horizontal pair
-    # permit an open hangar hypothesis. Three pairs alone are not proof of a room.
-    votes=np.zeros(air.shape,np.uint8);vertical=None
-    for axis in range(3):
-        checkpoint(cancel);before=np.maximum.accumulate(hull,axis=axis);after=np.flip(np.maximum.accumulate(np.flip(hull,axis=axis),axis=axis),axis=axis);inside=before&after&air
-        votes+=inside
-        if axis==0:vertical=inside.copy()
-    domain=air&((~raw_exterior)|(vertical&(votes>=2)))
-    del before,after,inside
-    if progress:progress(30,'외형 투영·가상 개구 경계 후보')
-    # Interior cores separate narrow doorways. Multi-source fill covers all
-    # domain cells without merging labels; label interfaces are virtual portals.
-    core=domain.copy()
-    for axis in range(3):
-        for sign in (-1,1):core &= shift(domain,axis,sign)
-    labels,k=components(core,queue,cancel);del core
-    points=np.flatnonzero(labels.ravel());tail=len(points);queue[:tail]=points;head=0;del points
-    while head<tail:
-        checkpoint(cancel);head,tail=grow_step(domain.ravel(),labels.ravel(),queue,head,tail,W,L,H)
-        if progress:progress(35+int(15*head/max(1,air.size)),'방 코어·개구부 분리 및 빈 복셀 복원')
-    # Thin components with no eroded core remain reviewable rather than disappearing.
-    missing=domain&(labels==0);extra,n=components(missing,queue,cancel);labels[missing]=extra[missing]+k;k+=n;del extra,missing,queue
+    geometry = None
+    structural = {}
+    if engine=='legacy':
+        # Directional silhouettes. Floor+ceiling and at least one horizontal pair
+        # permit an open hangar hypothesis. Three pairs alone are not proof of a room.
+        votes=np.zeros(air.shape,np.uint8);vertical=None
+        for axis in range(3):
+            checkpoint(cancel);before=np.maximum.accumulate(hull,axis=axis);after=np.flip(np.maximum.accumulate(np.flip(hull,axis=axis),axis=axis),axis=axis);inside=before&after&air
+            votes+=inside
+            if axis==0:vertical=inside.copy()
+        domain=air&((~raw_exterior)|(vertical&(votes>=2)))
+        del before,after,inside
+        if progress:progress(30,'외형 투영·가상 개구 경계 후보')
+        # Interior cores separate narrow doorways. Multi-source fill covers all
+        # domain cells without merging labels; label interfaces are virtual portals.
+        core=domain.copy()
+        for axis in range(3):
+            for sign in (-1,1):core &= shift(domain,axis,sign)
+        labels,k=components(core,queue,cancel);del core
+        points=np.flatnonzero(labels.ravel());tail=len(points);queue[:tail]=points;head=0;del points
+        while head<tail:
+            checkpoint(cancel);head,tail=grow_step(domain.ravel(),labels.ravel(),queue,head,tail,W,L,H)
+            if progress:progress(35+int(15*head/max(1,air.size)),'방 코어·개구부 분리 및 빈 복셀 복원')
+        # Thin components with no eroded core remain reviewable rather than disappearing.
+        missing=domain&(labels==0);extra,n=components(missing,queue,cancel);labels[missing]=extra[missing]+k;k+=n;del extra,missing
+    else:
+        if progress:progress(30,'원본 구조에서 바닥·천장·벽 근거 추출')
+        from .structure_review import extract_geometry
+        from .structural_recognition import domain_from_structure,label_domain,manual_edges,reserve_verified_partitions
+        geometry = extract_geometry(doc,bounds,hull,air)
+        domain,anchor,structural = domain_from_structure(air,hull,raw_exterior,geometry,engine,cancel)
+        edges,applied = manual_edges(domain.shape,bounds,marks,air)
+        reserved = reserve_verified_partitions(reference,domain,air,bounds,cancel) if reference else []
+        del reference
+        labels,k,counts = label_domain(domain,anchor,edges,queue,progress,cancel)
+        preserved = []
+        preserved_labels = set()
+        for key,volume,overlap,rows in reserved:
+            k+=1
+            preserved_labels.add(k)
+            for row in rows:
+                labels[row]=k
+                domain[row]=True
+            preserved.append({'candidate_id':key,'volume':volume,'structural_overlap':overlap,
+                              'reason':'physical floor and roof coverage, small vertical aperture, validated repaired seam'})
+        structural.update(counts,manual_boundaries_applied=applied,preserved_partitions=preserved,
+                          unassigned_exterior_air_cells=int((raw_exterior&~domain).sum()))
+        del anchor,edges,reserved
+    del queue
     # Reanalyse unusually large exterior-connected merges with a wider neck test.
     # This only refines labels. Every virtual seam remains explicitly uncertain.
     reanalyses=[];refined_labels={}
     ids,sizes=np.unique(labels[labels>0],return_counts=True)
-    for ident,volume0 in zip(ids,sizes):
+    for ident,volume0 in zip(ids,sizes) if engine=='legacy' else ():
         if volume0<50000:continue
         checkpoint(cancel);mask=labels==ident
         if not (mask&raw_exterior).any():continue
@@ -135,7 +176,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         del mask,local,core2,queue2,seeds,previous
         if progress:progress(49,'대형 외부 연결 후보 재분석·가상 경계 검토')
     partition_decisions=[]
-    if repair:
+    if repair and engine=='legacy':
         if progress:progress(50,'공유 공기면과 바닥·천장으로 인위적 분할 확인')
         state=getattr(doc,'analysis_state',{})
         protected=set(state.get('decisions',{}))
@@ -144,7 +185,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             labels,hull,source_blocks,sc.palette,bounds,protected,
             set(state.get('partition_rejections',[])),cancel)
     if progress:progress(50,'실제 갑판 접촉과 수직 개구부 검사')
-    deck_complexes=split_deck_complexes(labels,hull,raw_exterior,bounds,cancel)
+    deck_complexes=split_deck_complexes(labels,hull,raw_exterior,bounds,cancel) if engine=='legacy' else {}
     deck_parts={p['label']:source for source,rec in deck_complexes.items() for p in rec['parts']}
     k+=len(deck_parts)
     if deck_parts:
@@ -264,6 +305,12 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
         c['boundary_contacts']={key:f[key] for key in (
             'hull','terrain','air','roof','floor','top_boundary','bottom_boundary','open_side','other_label_side')}
         c['opening_groups']=openings[ident]
+        if engine!='legacy':
+            c['engine_id']=engine
+            c['shape']['method']='local floor/roof and lateral support; anchored partition of exact empty cells'
+            c['reasons'].append('validated_baseline_partition' if ident in preserved_labels else 'local_structural_partition')
+            c['exterior_connected']=bool(raw_counts[ident])
+
         # Preserve a useful distinction without inferring equipment or room purpose.
         c['enclosure_profile']={
             'roof_fraction':round(f['roof']/max(1,f['top_boundary']),4),
@@ -284,6 +331,9 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             if f['floor']/max(1,f['bottom_boundary'])<.4 and volume/horizontal>=4:
                 c['structure_class']='vertical_connection_review'
                 c['reasons'].append('vertical_air_requires_facility_review')
+        if engine!='legacy' and raw_counts[ident] and volume>50000:
+            c['decision']=c['base_decision']='exclude'
+            c['structure_class']='unresolved_exterior_merge'
         candidates.append(c)
         if progress:progress(65+int(30*(number+1)/max(1,min(512,len(ordered)))),'복셀 외곽 메시·원본 대조')
     by_label={c['virtual_boundary']['label']:c['id'] for c in candidates};portals=[]
@@ -336,8 +386,15 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     if structure_review:
         if progress:progress(95,'관측 외벽·갑판·개구부 및 부분 구획 분석')
         from .structure_review import analyse
-        review = analyse(doc,bounds,hull,terrain,air,raw_exterior,domain,labels,candidates,progress,cancel)
-    result={'method':METHOD,'algorithm_version':ALGORITHM_VERSION,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair,'structure_review':structure_review},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+        review = analyse(doc,bounds,hull,terrain,air,raw_exterior,domain,labels,candidates,progress,cancel,geometry=geometry)
+        if engine!='legacy':
+            review['manual_boundaries']=[m for m in marks if m['id'] in {a['id'] for a in applied}]
+            for candidate,record in zip(candidates,review['spaces']):
+                candidate['structural_membership']=record['hull_membership']
+                candidate['structural_partition']=record['partition_status']
+    result={'method':METHOD,'algorithm_version':ENGINES[engine],'engine_id':engine,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair,'structure_review':structure_review},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+    if structural:
+        result['structural_generation']=structural
     if review is not None:
         result['structure_review']=review
     def details():

@@ -17,7 +17,7 @@ import traceback
 import uuid
 import zipfile
 
-APP_VERSION = '0.9.3.6'
+APP_VERSION = '0.9.3.7'
 MAX_LOG_BYTES = 5 * 1024 * 1024
 ROTATIONS = 3
 _lock = threading.RLock()

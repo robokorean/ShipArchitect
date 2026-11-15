@@ -132,7 +132,7 @@ def register(doc,result,automatic=True,ids=None):
         if overlap:c['decision']='review';c['reasons'].append('existing_space_overlap_protected');continue
         # Revalidate actual cells at the current block epoch before any registration.
         if any(np_solid(doc,y,z,a,b) for y,z,a,b in c['volume_runs']):raise ValueError('후보에 실제 블록이 생겼습니다. 재분석하세요.')
-        s=new_space(c['volume_runs'],doc.schematic.size,'3D 공간 '+str(len(spaces)+1),'미지정');s.update(origin='auto' if automatic else 'manual',auto_registered=automatic,recognition={'fingerprint':c['fingerprint'],'source_fingerprint':c.get('source_fingerprint',c['fingerprint']),'method':c.get('method','3d_air_components'),'checks':c['checks'],'mesh':c.get('mesh'),'virtual_boundary':c.get('virtual_boundary')})
+        s=new_space(c['volume_runs'],doc.schematic.size,'3D 공간 '+str(len(spaces)+1),'미지정');s.update(origin='auto' if automatic else 'manual',auto_registered=automatic,recognition={'fingerprint':c['fingerprint'],'source_fingerprint':c.get('source_fingerprint',c['fingerprint']),'method':c.get('method','3d_air_components'),'engine_id':c.get('engine_id','legacy' if c.get('method')=='exterior_voxel_mesh' else '3d_air_components'),'checks':c['checks'],'mesh':c.get('mesh'),'virtual_boundary':c.get('virtual_boundary')})
         spaces.append(s);added.append(s['id']);
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
         c['decision']='registered';c['confirmed']=True

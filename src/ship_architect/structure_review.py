@@ -77,12 +77,10 @@ def cell_count(rows):
     return sum(b-a+1 for _, _, a, b in rows)
 
 
-def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, progress, cancel):
-    started = perf_counter()
-    checkpoint(cancel)
-    offset = bounds.lo
+def extract_geometry(doc, bounds, hull, air):
+    """Observed structure, independent of the candidate labels and exterior air."""
+    x0,y0,z0 = bounds.lo
     sc = doc.schematic
-    x0,y0,z0 = offset
     x1,y1,z1 = bounds.hi
     source = sc.blocks[y0:y1+1,z0:z1+1,x0:x1+1]
     categories = {i: classification(doc, state) for i,state in sc.palette.items()}
@@ -101,6 +99,17 @@ def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, pr
     platform = top & ~deck & (sx >= 2) & (sz >= 2)
     wall = structure & (sy >= 2) & ((sx >= 3) | (sz >= 3))
     del sx, sz, sy
+    return source, categories, equipment_ids, equipment, structure, deck, narrow|platform, wall
+
+
+def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, progress, cancel, geometry=None):
+    started = perf_counter()
+    checkpoint(cancel)
+    offset = bounds.lo
+    x0,y0,z0 = offset
+    if geometry is None:
+        geometry = extract_geometry(doc,bounds,hull,air)
+    source, categories, equipment_ids, equipment, structure, deck, supports, wall = geometry
     data = {key: {'faces': [], 'runs': [], 'count': 0, 'rows_omitted': 0} for key in LAYERS}
 
     def add(key, mask, face=None, count=True):
@@ -117,7 +126,7 @@ def analyse(doc, bounds, hull, terrain, air, raw, domain, labels, candidates, pr
             target.extend([*face, *row] for row in rows[:slots])
 
     add('decks', deck, (1, 1))
-    add('supports', narrow|platform)
+    add('supports', supports)
     add('equipment', equipment)
     equipment_groups = []
     equipment_by_label = {}

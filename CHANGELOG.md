@@ -1,3 +1,10 @@
+# v0.9.3.7
+
+- Structural recognition derives candidate air and floor-anchored partitions from local geometry before room labelling.
+- Hybrid adds bounded recovery at open edges and preserves strongly supported, validated Legacy boundaries where the structural evidence independently agrees.
+- Keep Legacy available and selected by default while real-world room accuracy is still being evaluated. Add same-input comparison and engine provenance.
+- Apply user-marked analysis planes only to the candidate graph for the structural engines. Export structural metrics and retain project, undo, block and NBT compatibility.
+
 # v0.9.3.6
 
 - Add independently selectable structure evidence in the 2D and 3D editors, including hull surfaces, deck and support geometry, equipment, observed air interfaces, virtual boundaries and both air masks.

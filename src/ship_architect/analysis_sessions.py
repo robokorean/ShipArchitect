@@ -21,10 +21,13 @@ def block_signature(doc):
     return digest.hexdigest()
 
 
-def provenance(doc, method, mode):
+def provenance(doc, method, mode, result=None):
     from .exterior_structure import ALGORITHM_VERSION
+    result=result or {}
     return {
-        'program_version': __version__, 'algorithm_version': ('0.9.3' if method=='3d_air_components' else ALGORITHM_VERSION),
+        'program_version': __version__,
+        'engine_id':result.get('engine_id','legacy' if method=='exterior_voxel_mesh' else method),
+        'algorithm_version': result.get('algorithm_version','0.9.3' if method=='3d_air_components' else ALGORITHM_VERSION),
         'algorithm': method, 'mode': mode, 'created_at': timestamp(),
         'original_sha256': hashlib.sha256(doc.original).hexdigest(),
         'block_signature': block_signature(doc), 'block_epoch': doc.block_epoch,
