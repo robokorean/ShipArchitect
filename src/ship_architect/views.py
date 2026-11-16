@@ -166,6 +166,10 @@ class View3D(QWidget):
         self.visible_y=None;self.floor_range=None;self.space_hits=[];self.scene_hits=[];self.scene_lines=[]
         self.render_factor=1.
         self.render_stats={}
+        from .render_settings import validated
+        from .space_render import SpaceRenderer
+        self.space_renderer=SpaceRenderer(self)
+        self.render_quality=validated({})
         self.interactive_quads=np.empty((0,4,3),np.float32);self.interactive_materials=[];self.interactive_frames=0;self.interaction_active=False
         self.mesh_busy=False
         self.mesh_key=None;self.interaction_renders=0;self.render_generation=0;self.frame_camera=None
@@ -176,6 +180,7 @@ class View3D(QWidget):
         self.setToolTip('왼쪽 드래그: 회전 / 오른쪽 드래그: 이동 / 휠: 확대\n클릭: 좌표 확인 / Shift+클릭 두 번: 구역 양 끝점')
 
     def set_document(self, doc):
+        self.space_renderer.reset()
         self.doc = doc
         self.blocks = doc.schematic.blocks
         self.mesh=MeshScene();self.mesh_key=None;self.frame=None;self.frame_camera=None;self.validation_spaces=[];self.partition_faces=[]
@@ -291,7 +296,7 @@ class View3D(QWidget):
     def schedule_render(self):
         self.render_serial+=1
         self.pick_buffer=None
-        if not self.render_timer.isActive():self.render_timer.start(18)
+        if not self.render_timer.isActive():self.render_timer.start(max(8, round(1000/self.render_quality['fps'])))
         self.update()
 
     def _request_render(self):
@@ -374,13 +379,15 @@ class View3D(QWidget):
         self.render_worker=None
         self.render_busy=False
         if self.render_request:self._start_render()
-        elif self.interaction_active:self.render_timer.start(12)
+        elif self.interaction_active:self.render_timer.start(max(8, round(1000/self.render_quality['fps'])))
 
     def resizeEvent(self,event):
         self.schedule_render()
         super().resizeEvent(event)
 
     def cancel_jobs(self):
+        bench=getattr(self,'workbench',None)
+        self.space_renderer.halted=bool(bench and bench.owner.closing)
         self.interaction_active=False
         self.mesh_serial+=1;self.render_serial+=1
         self.mesh_request=self.render_request=None
@@ -442,6 +449,7 @@ class View3D(QWidget):
         toward = self.camera()
         if self.frame is not None and self.frame_camera is not None:
             c=self.frame_camera;self.center=np.asarray(c['center']);self.basis=np.asarray(c['basis']);self.origin=np.asarray(c['origin']);self.scale=c['scale'];self.frame_toward=np.asarray(c['toward']);self.painting_frame=True
+        self.space_renderer.begin()
         w, h, l = self.doc.schematic.size
         p.setPen(QPen(QColor('#263b50'), 1))
         step = max(1, math.ceil(max(w, l)/40))
@@ -455,8 +463,10 @@ class View3D(QWidget):
         if self.show_blocks:
             if self.frame is not None:
                 bench=getattr(self,'workbench',None)
+                opacity=getattr(self,'hull_opacity',100)
                 if bench is not None and getattr(self,'scene_selection',set()):
-                    p.setOpacity(bench.selection_opacity.value()/100)
+                    opacity=min(opacity,bench.selection_opacity.value())
+                p.setOpacity(opacity/100)
                 p.drawImage(QRectF(self.rect()),self.frame)
                 p.setOpacity(1)
             if self.interaction_active:self.interactive_frames+=1
@@ -506,6 +516,7 @@ class View3D(QWidget):
             p.setPen(QColor('#ffba8a'))
             p.drawText(QRectF(20, 45, self.width()-40, 110), Qt.TextFlag.TextWordWrap, self.error)
         p.end();self.painting_frame=False
+        self.space_renderer.finish()
 
     def occluded_point(self, xyz):
         if not self.show_blocks or self.pick_buffer is None:return False

@@ -84,6 +84,12 @@ def validate_settings(value,size):
     """Discard malformed view metadata without granting access or changing block data."""
     if not isinstance(value,dict):return {}
     out={}
+    if type(value.get('hull_opacity')) is int:out['hull_opacity']=max(15,min(100,value['hull_opacity']))
+    if isinstance(value.get('display_preset'),str):out['display_preset']=value['display_preset'][:40]
+    if any(k in value for k in ('display_presets','preset_previous')):
+        from .view_presets import validate_presets
+        out['display_presets']=validate_presets(value.get('display_presets'))
+        out['preset_previous']=validate_presets({'temp':value.get('preset_previous')}).get('temp')
     color=value.get('highlight_color','')
     if isinstance(color,str) and len(color)==7 and color[0]=='#' and all(c in '0123456789abcdefABCDEF' for c in color[1:]):
         out['highlight_color']=color
@@ -96,7 +102,7 @@ def validate_settings(value,size):
     for key in ('exterior','roof','occluders','plane_projection','show_blocks','show_spaces','only_space','ghost_floors','legacy_cut','single_layer','zone_clip'):
         if type(value.get(key)) is bool:out[key]=value[key]
     if isinstance(value.get('hidden'),list):out['hidden']=[i for i in value['hidden'][:min(1000000,int(np.prod(size)))] if type(i) is int and 0<=i<int(np.prod(size))]
-    for key in ('hidden_overlays','hidden_groups','expanded','selected_keys'):
+    for key in ('hidden_overlays','hidden_groups','expanded','selected_keys','favorites'):
         if isinstance(value.get(key),list):out[key]=[s for s in value[key][:25000] if isinstance(s,str) and len(s)<=1024]
     if isinstance(value.get('selected'),str) and len(value['selected'])<=1024:out['selected']=value['selected']
     xyz=value.get('selected_xyz')

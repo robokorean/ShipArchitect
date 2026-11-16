@@ -43,7 +43,7 @@ class StructureReview(QWidget):
         self.engine.setToolTip('Legacy와 같은 설계도에서 구조 기반 두 엔진을 비교할 수 있습니다.')
         layout.addWidget(self.engine)
         commands = QHBoxLayout()
-        for label, callback in [('신규 구조 분석', self.scan), ('Legacy와 비교', self.compare), ('공통 도면', lambda: owner.integrated_ui.open_drawing())]:
+        for label, callback in [('신규 구조 분석', self.scan), ('Legacy와 비교', self.compare), ('공통 도면', lambda: owner.integrated_ui.open_drawing()), ('검증 표시', lambda: owner.workbench.presets.set('review'))]:
             button = QPushButton(label)
             button.clicked.connect(callback)
             commands.addWidget(button)

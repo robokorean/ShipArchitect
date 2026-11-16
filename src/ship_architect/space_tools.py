@@ -180,6 +180,9 @@ class SpaceTools(QObject):
         if key in ('None','source','blocks','floors') or key.startswith('floor:'):
             return
         menu=QMenu(self.b.tree)
+        if key in self.b.records:
+            label='즐겨찾기에서 제거' if key in self.b.favorites else '즐겨찾기에 추가'
+            menu.addAction(label,lambda:self.b.toggle_favorite(key))
         menu.addAction('선택 위치로 이동',self.b.focus)
         if self.candidate_ids() or key.startswith('candgroup:'):
             menu.addAction('후보 확정·등록',lambda:self.w.space_view.bulk.confirm(

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt,QTimer,QPointF,QRectF,QByteArray,QItemSelectionModel
 from PySide6.QtGui import QAction,QKeySequence,QPen,QColor,QPolygonF
-from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QDockWidget,QTreeWidget,QTreeWidgetItem,QLineEdit,QComboBox,QSpinBox,QCheckBox,QPushButton,QLabel,QPlainTextEdit,QSplitter,QToolBar,QScrollArea,QColorDialog,QHeaderView)
+from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QDockWidget,QTreeWidget,QTreeWidgetItem,QLineEdit,QComboBox,QSpinBox,QCheckBox,QPushButton,QLabel,QPlainTextEdit,QSplitter,QToolBar,QScrollArea,QColorDialog,QHeaderView,QTabWidget,QMenu)
 from .display import DisplayState,validate_settings
 from .axis_plan import AxisPlan
 from .space_model import bbox,contains
@@ -18,29 +18,55 @@ from .scene_registry import key_at, PREFIXES
 ROLE=Qt.ItemDataRole.UserRole
 class Workbench:
     def __init__(self,owner):
-        self.owner=owner;self.display_exterior=None;self.busy=False;self.signature=None;self.selected_xyz=None;self.selected_kind=None;self.hidden_blocks=set();self.hidden_overlays=set();self.hidden_groups=set();self.evidence=[];self.equipment=[];self.selection_key=None;self.expanded=[];self.use_default_expansion=True
+        self.owner=owner;self.display_exterior=None;self.busy=False;self.signature=None;self.selected_xyz=None;self.selected_kind=None;self.hidden_blocks=set();self.hidden_overlays=set();self.hidden_groups=set();self.evidence=[];self.equipment=[];self.selection_key=None;self.expanded=[];self.use_default_expansion=True;self.favorites=set()
         self.timer=QTimer(owner);self.timer.setSingleShot(True);self.timer.setInterval(350);self.timer.timeout.connect(self.save_display)
+        from .view_presets import ViewPresets
+        from .render_ui import RenderControls
+        self.presets=ViewPresets(self)
+        self.graphics=RenderControls(self)
         self.axis_plan=AxisPlan(owner);owner.tabs.addTab(self.axis_plan,'다방향 2D')
-        self.tree=QTreeWidget();self.tree.setHeaderLabels(['장면 / 대상','상태','선택']);self.tree.header().setStretchLastSection(False);self.tree.setColumnWidth(0,235);self.tree.setColumnWidth(1,115);self.tree.setColumnWidth(2,50);self.tree.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch);self.tree.header().setSectionResizeMode(1,QHeaderView.ResizeMode.Fixed);self.tree.header().setSectionResizeMode(2,QHeaderView.ResizeMode.Fixed);self.tree.setColumnWidth(1,90);self.tree.setColumnWidth(2,45);self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection);self.tree.itemSelectionChanged.connect(self.selected);self.tree.itemChanged.connect(self.on_item_changed)
+        self.tree=QTreeWidget();self.tree.setHeaderLabels(['표시 / 대상','상태','선택']);self.tree.header().setStretchLastSection(False);self.tree.setColumnWidth(0,235);self.tree.setColumnWidth(1,115);self.tree.setColumnWidth(2,50);self.tree.header().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch);self.tree.header().setSectionResizeMode(1,QHeaderView.ResizeMode.Fixed);self.tree.header().setSectionResizeMode(2,QHeaderView.ResizeMode.Fixed);self.tree.setColumnWidth(1,90);self.tree.setColumnWidth(2,45);self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection);self.tree.itemSelectionChanged.connect(self.selected);self.tree.itemChanged.connect(self.on_item_changed)
+        self.tree.setHorizontalScrollMode(QTreeWidget.ScrollMode.ScrollPerPixel)
+        self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.header().customContextMenuRequested.connect(self.column_menu)
+        self.tree.setUniformRowHeights(True)
         container=QWidget();lay=QVBoxLayout(container);row=QHBoxLayout();self.search=QLineEdit();self.search.setPlaceholderText('장면 검색: 공간·설비·연결');self.search.textChanged.connect(self.filter);row.addWidget(self.search);self.sort=QComboBox();self.sort.addItems(['층 / 이름','용도 / 이름','큰 공간 우선']);self.sort.currentIndexChanged.connect(lambda _:self.rebuild_tree(True));row.addWidget(self.sort);lay.addLayout(row);lay.addWidget(self.tree)
         row=QHBoxLayout()
         self.kind_filter=QComboBox()
         for label,key in [('전체 대상','all'),('확정 공간','spaces'),('미확정 후보','candidates'),
-                          ('설비','equipment'),('이동·연결','connections'),('원본과 층','source')]:
+                          ('설비','equipment'),('이동·연결','connections'),('원본과 층','source'),('즐겨찾기','favorites')]:
             self.kind_filter.addItem(label,key)
         self.kind_filter.currentIndexChanged.connect(self.filter)
         row.addWidget(self.kind_filter)
         select_visible=QPushButton('검색 결과 선택');select_visible.clicked.connect(self.select_filtered);row.addWidget(select_visible)
         lay.addLayout(row)
+        self.selection_label=QLabel('선택 0 · 목록 표시 0')
+        self.selection_label.setWordWrap(True)
+        self.selection_label.setToolTip('왼쪽 체크는 가시성, 오른쪽 체크는 일괄 작업 선택입니다.')
+        lay.addWidget(self.selection_label)
+        self.extended_highlight=QCheckBox('다중 강조 (최대 32)')
+        self.extended_highlight.toggled.connect(self.refresh_selection_overlay)
+        lay.addWidget(self.extended_highlight)
         row=QHBoxLayout()
         for text,fn in [('초점 F',self.focus),('목록 합치기',self.merge_selected),('펼치기',self.tree.expandAll),('접기',self.tree.collapseAll)]:
             button=QPushButton(text);button.clicked.connect(fn);row.addWidget(button)
         lay.addLayout(row);self.scene_dock=self.dock('프로젝트 탐색기','scene_tree',container,Qt.DockWidgetArea.LeftDockWidgetArea)
         # Move the existing editor, rather than duplicate it or its document state.
         self.inspector=QPlainTextEdit();self.inspector.setReadOnly(True);self.inspector.setMaximumHeight(170)
-        right=QWidget();r=QVBoxLayout(right);r.addWidget(QLabel('선택 속성 · NBT 읽기 전용'));r.addWidget(self.inspector)
+        right=QWidget();r=QVBoxLayout(right)
+        tabs=QTabWidget()
+        self.summary_properties=QPlainTextEdit()
+        self.summary_properties.setReadOnly(True)
+        tabs.addTab(self.summary_properties,'선택 속성')
+        tabs.addTab(self.inspector,'개발자 상세 · 복사')
+        tabs.setMaximumHeight(172)
+        r.addWidget(tabs)
         self.property_name=QLineEdit();self.property_name.setPlaceholderText('선택 공간 이름');self.property_purpose=QLineEdit();self.property_purpose.setPlaceholderText('선택 공간 용도');self.property_alpha=QSpinBox();self.property_alpha.setRange(0,255);self.property_alpha.setPrefix('알파 ');r.addWidget(self.property_name);r.addWidget(self.property_purpose);r.addWidget(self.property_alpha)
         row=QHBoxLayout();apply=QPushButton('공간 속성 적용');apply.clicked.connect(self.apply_properties);row.addWidget(apply);color=QPushButton('공간 색상');color.clicked.connect(owner.space_manager.choose_color);row.addWidget(color);r.addLayout(row)
+        from .explorer_properties import edit_batch
+        batch=QPushButton('선택 공간 일괄 속성')
+        batch.clicked.connect(lambda:edit_batch(self))
+        r.addWidget(batch)
         owner.panel_scroll.setMaximumWidth(16777215);r.addWidget(owner.panel_scroll,1)
         self.editor_dock=self.dock('선택 속성·편집','properties_editor',right,Qt.DockWidgetArea.RightDockWidgetArea)
         self.view_panel=QWidget();vl=QVBoxLayout(self.view_panel)
@@ -97,6 +123,7 @@ class Workbench:
         self.poll=QTimer(owner);self.poll.setInterval(750);self.poll.timeout.connect(self.poll_changes);self.poll.start()
     def shutdown(self):
         self.timer.stop()
+        self.graphics.timer.stop()
         if hasattr(self,'poll'):self.poll.stop()
         for dock in (self.scene_dock,self.editor_dock,self.view_dock,*self.floating.values()):dock.hide()
         for bar in self.modebars:bar.hide()
@@ -187,7 +214,9 @@ class Workbench:
         payload=self.settings();self.owner.doc.view_settings=payload
         try:atomic_write(self.display_path(),json.dumps({'size':self.owner.doc.schematic.size,'settings':payload},ensure_ascii=False).encode())
         except OSError as e:self.owner.statusBar().showMessage('표시 설정 저장 실패: '+str(e))
-    def settings(self):return {'selection_opacity':self.selection_opacity.value(),'selection_xray':self.selection_xray.isChecked(),'highlight_color':self.highlight_color,'structure_layers':sorted(self.owner.structure_review.visible) if hasattr(self.owner,'structure_review') else [],'structure_opacity':self.owner.structure_review.opacity.value() if hasattr(self.owner,'structure_review') else .65,'space_presentation':getattr(self.owner.view,'space_display',{}),'axis':self.cut_axis.currentText(),'position':self.cut_position.value(),'side':self.cut_side.currentText(),'exterior':self.exterior.isChecked(),'roof':self.roof.isChecked(),'occluders':self.occluders.isChecked(),'hidden':sorted(self.hidden_blocks),'hidden_overlays':sorted(self.hidden_overlays),'hidden_groups':sorted(self.hidden_groups),'isolation':self.isolation,'selected':self.selection_key,'selected_keys':[i.data(0,ROLE) for i in self.tree.selectedItems() if i.data(0,ROLE)],'selected_xyz':self.selected_xyz,'selected_kind':self.selected_kind,'layer':self.owner.layer.value(),'plane_orientation':self.axis_plan.orientation.currentText(),'plane_slice':self.axis_plan.slice.value(),'plane_projection':self.axis_plan.projection.isChecked(),'show_blocks':self.owner.view.show_blocks,'show_spaces':self.owner.view.show_spaces,'only_space':self.owner.space_manager.only.isChecked(),'ghost_floors':self.owner.space_manager.ghost.isChecked(),'legacy_cut':self.owner.clip.isChecked(),'single_layer':self.owner.single_layer.isChecked(),'zone_clip':self.owner.zone_clip.isChecked(),'expanded':self.expanded_keys()}
+    def settings(self):return {'display_preset':self.presets.current,'display_presets':self.presets.custom,
+        'preset_previous':self.presets.previous,'hull_opacity':getattr(self.owner.view,'hull_opacity',100),
+        'favorites':sorted(self.favorites),'selection_opacity':self.selection_opacity.value(),'selection_xray':self.selection_xray.isChecked(),'highlight_color':self.highlight_color,'structure_layers':sorted(self.owner.structure_review.visible) if hasattr(self.owner,'structure_review') else [],'structure_opacity':self.owner.structure_review.opacity.value() if hasattr(self.owner,'structure_review') else .65,'space_presentation':getattr(self.owner.view,'space_display',{}),'axis':self.cut_axis.currentText(),'position':self.cut_position.value(),'side':self.cut_side.currentText(),'exterior':self.exterior.isChecked(),'roof':self.roof.isChecked(),'occluders':self.occluders.isChecked(),'hidden':sorted(self.hidden_blocks),'hidden_overlays':sorted(self.hidden_overlays),'hidden_groups':sorted(self.hidden_groups),'isolation':self.isolation,'selected':self.selection_key,'selected_keys':[i.data(0,ROLE) for i in self.tree.selectedItems() if i.data(0,ROLE)],'selected_xyz':self.selected_xyz,'selected_kind':self.selected_kind,'layer':self.owner.layer.value(),'plane_orientation':self.axis_plan.orientation.currentText(),'plane_slice':self.axis_plan.slice.value(),'plane_projection':self.axis_plan.projection.isChecked(),'show_blocks':self.owner.view.show_blocks,'show_spaces':self.owner.view.show_spaces,'only_space':self.owner.space_manager.only.isChecked(),'ghost_floors':self.owner.space_manager.ghost.isChecked(),'legacy_cut':self.owner.clip.isChecked(),'single_layer':self.owner.single_layer.isChecked(),'zone_clip':self.owner.zone_clip.isChecked(),'expanded':self.expanded_keys()}
     def attach_document(self):
         self.busy=True;self.tree.clear();self.signature=None;self.pending_route=None;self.selected_xyz=None;self.selection_key=None;self.isolation=None;self.display_exterior=None;self.hidden_blocks=set();self.hidden_overlays=set();self.hidden_groups=set();self.evidence=[];self.equipment=[]
         p=getattr(self.owner.doc,'view_settings',{})
@@ -201,6 +230,11 @@ class Workbench:
             p={}
         p=validate_settings(p,self.owner.doc.schematic.size)
         self.owner.doc.view_settings=p
+        self.favorites=set(p.get('favorites',[]))
+        self.presets.restore_saved(p)
+        self.extended_highlight.blockSignals(True)
+        self.extended_highlight.setChecked(False)
+        self.extended_highlight.blockSignals(False)
         self.previous_camera=None
         self.selection_opacity.setValue(p.get('selection_opacity',100))
         self.selection_xray.setChecked(p.get('selection_xray',True));self.highlight_color=p.get('highlight_color','#ffce62')
@@ -221,7 +255,7 @@ class Workbench:
         space=self.owner.doc.active_space();default_y=min(r[0] for r in space['runs']) if space else 0
         self.owner.layer.setValue(max(0,min(self.owner.doc.schematic.size[1]-1,int(p.get('layer',default_y)))))
         self.busy=False;self.owner.view.route_path=[];self.owner.view.route_key=None;self.axis_plan.orientation.setCurrentText(p.get('plane_orientation','평면도 (위)'));self.axis_plan.orientation_changed();self.axis_plan.slice.setValue(int(p.get('plane_slice',self.owner.layer.value())));self.axis_plan.projection.setChecked(bool(p.get('plane_projection',False)));self.apply(reject=False);self.rebuild_tree(True)
-        self.inspector.clear();self.property_name.clear();self.property_purpose.clear()
+        self.inspector.clear();self.summary_properties.clear();self.property_name.clear();self.property_purpose.clear()
         if self.selected_xyz:self.block_selected(self.selected_xyz)
         elif self.tree.selectedItems():
             self.selected(position_drawing=False)
@@ -318,7 +352,7 @@ class Workbench:
                 walk(child)
         walk(self.tree.invisibleRootItem());return out
     def node(self,parent,text,key,checked=True,status=''):
-        item=QTreeWidgetItem(parent,[text,status]);item.setData(0,ROLE,key);item.setToolTip(0,text);item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(0,Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        item=QTreeWidgetItem(parent,[text,status]);item.setData(0,ROLE,key);item.setToolTip(0,text+'\n'+key);item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(0,Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
         if hasattr(self,'nodes'):self.nodes[key]=item
         return item
     def rebuild_tree(self,force=False):
@@ -326,6 +360,7 @@ class Workbench:
         if self.busy:return
         d=self.owner.doc;nav=self.owner.network_view;signature=(id(d),d.revision,id(nav.nav),id(nav.equipment),id(d.analysis_state),id(getattr(self.owner.view,'route_path',None)))
         if not force and signature==self.signature:return
+        self.tree.setUpdatesEnabled(False)
         self.pick_rows=None
         self.signature=signature;expanded=self.expanded_keys() if self.tree.topLevelItemCount() else self.expanded;selected_keys={i.data(0,ROLE) for i in self.tree.selectedItems()} or set(getattr(self,'restore_selected_keys',[]));self.busy=True;self.tree.clear();self.nodes={};self.records={}
         root=self.tree.invisibleRootItem()
@@ -340,7 +375,7 @@ class Workbench:
         origin=getattr(d,'analysis_display_origin','저장 결과')
         candidate_root=self.node(root,'인식 후보 · '+origin,'candidates',getattr(self.owner.view,'space_display',{}).get('show_candidates',True));candidate_groups={}
         from .space_display import external as external_space
-        for c in d.space_candidates:
+        for rank,c in enumerate(d.space_candidates,1):
             if c.get('decision')=='registered':
                 continue
             label='외부·큰 미분리' if external_space(c,d) else {'auto':'자동 등록 가능','registered':'등록됨','review':'검토 필요','exclude':'제외'}.get(c.get('decision'),'이전 인식')
@@ -348,7 +383,12 @@ class Workbench:
             if fragment in ('attached_fragment','residual_air','exterior_air'):
                 label={'attached_fragment':'인접 공간 조각','residual_air':'잔여 공기','exterior_air':'외부 공기'}[fragment]
             if label not in candidate_groups:candidate_groups[label]=self.node(candidate_root,label,'candgroup:'+label)
-            key='candidate:'+c['id'];self.node(candidate_groups[label],c['id']+' · '+str(c.get('volume',c.get('area',0)))+'셀',key,space_visible(self.owner.view,c,True),label);self.records[key]=c
+            key='candidate:'+c['id']
+            volume=c.get('volume',c.get('area',0))
+            kind='대형 공간' if volume>=10000 else '공간 조각' if fragment else '공간 후보'
+            title=f"{kind} {rank:02d} · Y{c['lo'][1]}–{c['hi'][1]} · {volume:,}셀"
+            self.node(candidate_groups[label],title,key,space_visible(self.owner.view,c,True),label)
+            self.records[key]=c
         for group in candidate_groups.values():
             states=[group.child(i).checkState(0) for i in range(group.childCount())]
             group.setCheckState(0,Qt.CheckState.Checked if all(v==Qt.CheckState.Checked for v in states)
@@ -383,7 +423,8 @@ class Workbench:
             category=records[0]['category']
             if category not in categories:
                 categories[category]=self.node(equipment,category,'equipgroup:'+category,'equipgroup:'+category not in self.hidden_groups)
-            group=self.node(categories[category],state+' · '+str(len(records))+'개','equiptype:'+state,
+            name=state.split('[',1)[0].split(':',1)[-1].replace('_',' ').capitalize()
+            group=self.node(categories[category],name+' · '+str(len(records))+'개','equiptype:'+state,
                             'equiptype:'+state not in self.hidden_groups and 'equipgroup:'+category not in self.hidden_groups)
             self.equip_type_nodes[state]=group
             QTreeWidgetItem(group,['좌표 펼치기',''])
@@ -420,7 +461,10 @@ class Workbench:
         if getattr(view,'route_key',None) and view.route_key not in self.records:
             view.route_key=None
             view.route_path=[]
-        self.busy=False;self.filter();self.refresh_selection_overlay()
+        self.busy=False
+        self.filter()
+        self.tree.setUpdatesEnabled(True)
+        self.refresh_selection_overlay()
     def expand_equipment(self,item):
         key=item.data(0,ROLE)
         if not isinstance(key,str) or not key.startswith('equiptype:'):return
@@ -435,19 +479,49 @@ class Workbench:
     def filter(self,*_):
         query=self.search.text().strip().casefold()
         wanted=self.kind_filter.currentData()
+        favorites=wanted=='favorites'
         def visit(item, inherited=False):
-            own=any(query in item.text(col).casefold() for col in (0,1))
+            key=item.data(0,ROLE) or ''
+            own=(not favorites or key in self.favorites) and (query in key.casefold() or any(query in item.text(col).casefold() for col in (0,1)))
             children=[visit(item.child(i),inherited or own) for i in range(item.childCount())]
             match=own or inherited or any(children)
             item.setHidden(not match)
             return match
         for i in range(self.tree.topLevelItemCount()):
             item=self.tree.topLevelItem(i)
-            allowed=wanted=='all' or wanted==item.data(0,ROLE) or wanted=='connections' and item.data(0,ROLE)=='routes'
-            if item.data(0,ROLE)=='equipment' and query and allowed:
+            allowed=wanted in ('all','favorites') or wanted==item.data(0,ROLE) or wanted=='connections' and item.data(0,ROLE)=='routes'
+            if item.data(0,ROLE)=='equipment' and (query or favorites) and allowed:
                 for group in self.equip_type_nodes.values():
                     self.expand_equipment(group)
             item.setHidden(not (visit(item) and allowed))
+        self.update_selection_count()
+
+    def update_selection_count(self):
+        if not hasattr(self,'records'):return
+        selected=len(self.keys_for_scope('group'))
+        visible_count=len(self.keys_for_scope('visible_tree'))
+        active=getattr(self.owner.view,'scene_selection',set())
+        mode=self.presets.current
+        self.selection_label.setText(f'선택 {selected:,} · 목록 {visible_count:,} · 강조 {len(active)}'+(f' · {mode}' if mode else ''))
+
+    def column_menu(self, point):
+        menu=QMenu(self.tree)
+        def widths(auto):
+            header=self.tree.header()
+            for i in range(3):
+                header.setSectionResizeMode(i,QHeaderView.ResizeMode.Stretch if auto and i==0 else QHeaderView.ResizeMode.Interactive)
+            if auto:
+                self.tree.setColumnWidth(1,90)
+                self.tree.setColumnWidth(2,45)
+        menu.addAction('열 자동 조절',lambda:widths(True))
+        menu.addAction('열 직접 조절 · 가로 스크롤',lambda:widths(False))
+        menu.exec(self.tree.header().mapToGlobal(point))
+
+    def toggle_favorite(self,key):
+        if key in self.favorites:self.favorites.remove(key)
+        elif len(self.favorites)<4096:self.favorites.add(key)
+        self.filter()
+        self.timer.start()
 
     def select_filtered(self):
         self.busy=True
@@ -563,14 +637,14 @@ class Workbench:
             self.refresh_selection_overlay()
             self.timer.start()
 
-    def refresh_selection_overlay(self):
+    def refresh_selection_overlay(self,*_):
         if not hasattr(self,'nodes'):return
         keys=self.keys_for_scope('group')
         ordered=sorted(keys,key=lambda k:(k!=self.selection_key,k))
-        self.owner.view.scene_selection=set(ordered[:32])
+        count=32 if self.extended_highlight.isChecked() else 1 if len(keys)>4 else 4
+        self.owner.view.scene_selection=set(ordered[:count])
         self.owner.view.selected_candidate_id=next((key[10:] for key in ordered if key.startswith('candidate:')),None)
-        if len(keys)>32:
-            self.owner.statusBar().showMessage(f'강조 32 / {len(keys)} · 선택 위치로 좁혀서 나머지 형상을 확인하세요.')
+        self.update_selection_count()
         self.owner.view.update()
         self.axis_plan.canvas.update()
         self.owner.space_manager.plan.update()
@@ -658,6 +732,7 @@ class Workbench:
                 self.owner.doc.active_space_id=None
                 self.owner.space_manager.load_properties()
             self.inspector.setPlainText('그룹 또는 선택 항목 없음')
+            self.summary_properties.setPlainText('그룹 또는 선택 항목 없음')
         elif key.startswith('space:'):
             self.busy=True
             try:
@@ -679,6 +754,7 @@ class Workbench:
             if position_drawing:
                 point=record.get('position') or record.get('positions',[record.get('lo')])[0]
                 if point is not None:self.axis_plan.slice.setValue(point[self.axis_plan.canvas.mapping()[2]])
+            self.inspect_readable(key,record)
             self.inspector.setPlainText(json.dumps({k:(v[:64] if k=='positions' else v) for k,v in record.items()
                                                   if k not in ('volume_runs','footprint')},ensure_ascii=False,indent=2))
         self.refresh_selection_overlay()
@@ -706,6 +782,13 @@ class Workbench:
         manager=self.owner.space_manager
         if self.owner.doc.active_space() is None:return
         manager.name.setText(self.property_name.text());manager.purpose.setText(self.property_purpose.text());manager.opacity.setValue(self.property_alpha.value());manager.properties();self.inspect_space()
+    def inspect_readable(self,key,record):
+        from .explorer_properties import format_record
+        from .spatial_ui import REASONS
+        title=self.nodes[key].text(0) if key in self.nodes else record.get('name',record.get('label',key))
+        names={space['id']:space['name'] for space in self.owner.doc.spaces}
+        self.summary_properties.setPlainText(format_record(record,title,names,REASONS))
+
     def inspect_space(self):
         space=self.owner.doc.active_space()
         if space:
@@ -716,6 +799,7 @@ class Workbench:
             match=matches_document(self.owner.doc,record)
             details={'생성 버전':provenance.get('program_version','이전 버전 / 확인 불가'),
                      '현재 블록 일치':{True:'일치',False:'변경됨',None:'확인 불가'}[match]}
+            self.inspect_readable('space:'+space['id'],space)
             self.inspector.setPlainText(json.dumps({k:v for k,v in space.items() if k!='runs'}|details|{'정확한 셀':sum(b-a+1 for _,_,a,b in space['runs']),'구간수':len(space['runs']),'bbox':bbox(space)},ensure_ascii=False,indent=2))
     def nbt_info(self,xyz):
         sc=self.owner.doc.schematic;container=sc.root['Blocks'] if sc.version==3 else sc.root
@@ -730,6 +814,7 @@ class Workbench:
         return None
     def block_selected(self,xyz):
         self.selected_xyz=tuple(xyz);self.selected_kind='block';self.selection_key='block:'+','.join(map(str,xyz));d=self.owner.doc;sc=d.schematic;state=sc.palette[int(sc.blocks[xyz[1],xyz[2],xyz[0]])]
+        self.summary_properties.setPlainText(f'블록  {state}\n좌표  {tuple(xyz)}')
         self.inspector.setPlainText(json.dumps({'XYZ':list(xyz),'block_state':state,'protection':d.protection_at(xyz),'BlockEntity':xyz in sc.entity_positions()[0],'NBT 읽기 전용':self.nbt_info(xyz),'주의':'속성은 읽기 전용. 실제 변경은 미리보기·승인 필요'},ensure_ascii=False,indent=2));key='equip:'+','.join(map(str,xyz))
         if key not in self.nodes:
             record=next((r for r in self.equipment if tuple(r['position'])==tuple(xyz)),None)
@@ -869,7 +954,7 @@ class Workbench:
 
     def selection_records(self):
         selected=getattr(self.owner.view,'scene_selection',set())
-        for key in sorted(selected):
+        for key in sorted(selected,key=lambda key:(key!=self.selection_key,key)):
             if key in self.records and self.record_visible(key):
                 yield key,self.records[key]
 
