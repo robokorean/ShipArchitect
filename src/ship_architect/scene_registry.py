@@ -5,6 +5,7 @@ import hashlib
 import json
 
 from .analysis_state import commit
+from .candidate_relations import prune_candidate_relations
 from .equipment import record, owner_index, ownership
 from .spatial3d import checkpoint, fingerprint
 
@@ -138,19 +139,13 @@ def delete_items(doc, space_ids, candidate_ids, scene_keys, exclude=False, fallb
             retained.append(candidate)
         result['candidates'] = retained
         result['counts'] = dict(Counter(c['decision'] for c in retained))
-        result['connections'] = [entry for entry in result.get('connections', [])
-                                 if not deleted_candidates.intersection(entry.get('spaces', []))]
-        for feature in result.get('semantic_features', []):
-            feature['spaces'] = [sid for sid in feature.get('spaces', []) if sid not in deleted_candidates]
+        prune_candidate_relations(result, deleted_candidates)
     if exclude:
         state['scene_excluded_shapes'] = sorted(set(state.get('scene_excluded_shapes', [])) | shapes)
     if candidate_ids:
         for key in ('session_reference','session_changes','session_side','comparison'):
             state.pop(key,None)
     prune_relationships(scene, space_ids, deleted_candidates)
-    if result:
-        for candidate in result['candidates']:
-            candidate['adjacent_spaces']=[row for row in candidate.get('adjacent_spaces',[]) if row['id'] not in deleted_candidates]
     zones = [z for z in doc.zones if z.get('registered_space_id') not in space_ids]
     old_zones = copy.deepcopy(doc.zones)
     commit(doc, state, [s for s in doc.spaces if s['id'] not in space_ids], 'scene_metadata_delete')
