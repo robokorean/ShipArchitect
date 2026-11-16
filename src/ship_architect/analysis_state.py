@@ -93,9 +93,8 @@ def apply_rules(result,state,size):
     if excluded:
         hidden_ids={c['id'] for c in result['candidates'] if c['fingerprint'] in excluded}
         result['candidates']=[c for c in result['candidates'] if c['id'] not in hidden_ids]
-        result['connections']=[link for link in result.get('connections',[]) if not hidden_ids.intersection(link.get('spaces',[]))]
-        for c in result['candidates']:
-            if 'adjacent_spaces' in c:c['adjacent_spaces']=[a for a in c['adjacent_spaces'] if a['id'] not in hidden_ids]
+        from .candidate_relations import prune_candidate_relations
+        prune_candidate_relations(result, hidden_ids)
     for c in result['candidates']:
         original=c['fingerprint'];c['source_fingerprint']=original
         decision=state.get('decisions',{}).get(original)
