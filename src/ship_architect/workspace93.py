@@ -130,11 +130,11 @@ class Workspace93:
         state=self.selected_state();return state.split('[')[0] if self.rule_scope.currentIndex()==0 else state
     def save_rule(self):
         try:
-            d=self.w.doc;state=copy.deepcopy(d.analysis_state);state.setdefault('equipment_rules',{})[self.rule_key()]=self.rule_type.currentText();commit(d,state,action='equipment_rule');self.w.refresh_history();self.w.network_view.invalidate();self.w.network_view.scan_equipment()
+            d=self.w.doc;state=copy.deepcopy(d.analysis_state);state.setdefault('equipment_rules',{})[self.rule_key()]=self.rule_type.currentText();commit(d,state,action='equipment_rule');self.w.refresh_history();self.w.network_view.invalidate();self.w.network_view.scan_equipment(persist=False)
         except Exception as e:self.w.error(e)
     def delete_rule(self):
         try:
-            d=self.w.doc;state=copy.deepcopy(d.analysis_state);state.setdefault('equipment_rules',{}).pop(self.rule_key(),None);commit(d,state,action='equipment_rule_remove');self.w.refresh_history();self.w.network_view.invalidate();self.w.network_view.scan_equipment()
+            d=self.w.doc;state=copy.deepcopy(d.analysis_state);state.setdefault('equipment_rules',{}).pop(self.rule_key(),None);commit(d,state,action='equipment_rule_remove');self.w.refresh_history();self.w.network_view.invalidate();self.w.network_view.scan_equipment(persist=False)
         except Exception as e:self.w.error(e)
     def attach(self):
         self.w.space_view.bulk.attach();self.w.view.validation_spaces=[]

@@ -106,14 +106,23 @@ class AnalysisSessions:
             result['provenance']=provenance(d,result['method'],mode,result)
             if keep_rules:
                 result=apply_rules(result,state,d.schematic.size)
+            elif engine=='precision':
+                result=apply_rules(result,{'scene_excluded_shapes':state.get('scene_excluded_shapes',[])},d.schematic.size)
             baseline=legacy or prior or {'method':'saved_spaces','candidates':saved}
             changes=compare_candidates(baseline['candidates'],result['candidates'],cancel)
-            return result,baseline,changes
+            scene=inventory_result=None
+            if engine=='precision':
+                from .equipment import inventory
+                from .scene_registry import discover
+                progress(98,'프로젝트 탐색기 · 설비 및 이동 관련 등록')
+                inventory_result=inventory(d,lambda n,m:progress(98+n//50,m),cancel)
+                scene=discover(d,result,inventory_result,cancel,state)
+            return result,baseline,changes,scene,inventory_result
 
         def done(value):
             if w.doc is not d or d.revision!=revision:
                 return
-            result,baseline,changes=value
+            result,baseline,changes,scene,inventory_result=value
             # Preserve even an empty saved snapshot; never apply candidate geometry here.
             state['last_result']=result
             # The reference view only needs exact candidates, source identity and timing.
@@ -121,6 +130,16 @@ class AnalysisSessions:
             state['session_reference']={k:v for k,v in baseline.items() if k in (
                 'method','algorithm_version','engine_id','scope','candidates','elapsed_seconds',
                 'provenance','revision','block_epoch','counts','archive_read_only')} if compare_legacy else baseline
+            if engine=='precision':
+                reference={k:v for k,v in baseline.items() if k in (
+                    'method','algorithm_version','engine_id','scope','candidates','elapsed_seconds',
+                    'provenance','revision','block_epoch','counts','archive_read_only')}
+                if reference['method']!='saved_spaces':
+                    reference['candidates']=[{key:value for key,value in c.items()
+                        if key not in ('mesh','virtual_boundary','virtual_closures','adjacent_spaces','boundary_samples')}
+                        for c in baseline['candidates']]
+                state['session_reference']=reference
+                state['scene_records']=scene
             state['session_changes']=changes
             state['session_side']='new'
             commit(d,state,action='recognition_'+mode)
@@ -130,6 +149,12 @@ class AnalysisSessions:
             if w.view.space_display.get('mode') in ('none','confirmed'):
                 w.space_tools.set_mode('both')
             self.batch.attach()
+            if inventory_result is not None:
+                network=w.network_view
+                network.equipment=inventory_result
+                network.analysis_doc=d
+                network.snapshot=network.signature()
+                w.workbench.rebuild_tree(True)
             w.refresh_history()
             self.describe()
             summary={'reference_engine':baseline.get('engine_id',baseline.get('method')),

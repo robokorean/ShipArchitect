@@ -193,7 +193,7 @@ class Document:
         if self.active_space() is not None and not np.all(contains(self.active_space(),indices,self.schematic.size)):
             raise ValueError('정확한 공간 셀 밖의 변경을 차단했습니다. 경계 상자는 건축 허가 범위가 아닙니다.')
 
-    def set_spaces(self,spaces,action='space_edit',active=None):
+    def set_spaces(self,spaces,action='space_edit',active=None,*,sync_scene=True):
         from .space_model import validate_space
         new=[validate_space(s,self.schematic.size) for s in spaces]
         if len(new)>512 or len({s['id'] for s in new})!=len(new):raise ValueError('공간 수/ID 오류')
@@ -216,6 +216,16 @@ class Document:
         self.spaces=new;self.active_space_id=active
         self.undo_stack.append({'command':'spaces','delta':delta,'order_before':order_before,'order_after':[s['id'] for s in new],
                                 'active_before':old_active,'active_after':active})
+        if sync_scene and self.analysis_state.get('scene_records') and (
+            set(before)!=set(after) or any(before[sid]['runs']!=after[sid]['runs'] for sid in before.keys()&after.keys())
+        ):
+            from .scene_registry import bind_spaces
+            old_state=self.analysis_state
+            next_state=json.loads(json.dumps(old_state))
+            bind_spaces(next_state['scene_records'],list(before.values()),new,self.schematic.size)
+            if next_state!=old_state:
+                self.undo_stack[-1].update(analysis_before=old_state,analysis_after=next_state)
+                self.analysis_state=next_state
         self.redo_stack.clear();self.log(action,space_id=active,blocks=0)
 
     def _space_history(self,record,forward):

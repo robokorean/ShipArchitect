@@ -78,12 +78,24 @@ class PlaneCanvas(QWidget):
         if xyz:self.panel.status.setText('X/Y/Z = '+str(xyz))
         if self.drag is not None:self.end=xyz;self.update()
     def mouseReleaseEvent(self,e):
+        if e.button()==Qt.MouseButton.RightButton:
+            owner=self.panel.owner
+            xyz=self.coord(e.position())
+            if xyz is not None and owner.workbench.pick_scene(owner.workbench.keys_at(xyz)):
+                owner.space_tools.context_menu(owner.workbench.selection_key,e.globalPosition().toPoint())
+            return
         start=self.drag;end=self.coord(e.position());self.drag=None;self.end=None
         if start is None or end is None:return
         owner=self.panel.owner;mode=owner.space_manager.edit_mode.currentData()
         if self.panel.projection.isChecked() and mode!='select':self.panel.status.setText('투영은 선택/검사용입니다. 경계 편집은 투영을 끄고 단면 좌표를 지정하세요.');return
         if mode=='select':
             if start==end:
+                bench=getattr(owner,'workbench',None)
+                if not self.panel.inspect.isChecked() and bench is not None and bench.pick_scene(
+                    bench.keys_at(end), bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+                ):
+                    self.panel.refresh()
+                    return
                 if owner.view.display_state.contains_xyz(end,owner.doc,owner.view):owner.picked(end)
                 if not self.panel.inspect.isChecked():owner.space_manager.select_at(end)
             else:owner.set_selection(Bounds.between(start,end))

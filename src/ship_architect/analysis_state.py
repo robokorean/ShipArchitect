@@ -9,6 +9,8 @@ EQUIPMENT_TYPES=('Create','ComputerCraft','추진 설비 후보','전력 설비 
 
 def validate(value,size):
     if not isinstance(value,dict) or len(json.dumps(value))>48_000_000:raise ValueError('분석 설정 형식/48MB 한도 오류')
+    from .scene_registry import validate_scene
+    validate_scene(value,size)
     state=copy.deepcopy(value);rules=state.setdefault('equipment_rules',{})
     if not isinstance(rules,dict) or len(rules)>4096:raise ValueError('설비 규칙 수 오류')
     for key,val in rules.items():
@@ -63,7 +65,10 @@ def validate(value,size):
 
 def commit(doc,state,spaces=None,action='analysis_settings'):
     state=validate(state,doc.schematic.size);before=copy.deepcopy(doc.analysis_state)
-    doc.set_spaces(doc.spaces if spaces is None else spaces,action,doc.active_space_id if doc.active_space_id in {s['id'] for s in (doc.spaces if spaces is None else spaces)} else None)
+    if spaces is not None and state.get('scene_records'):
+        from .scene_registry import bind_spaces
+        bind_spaces(state['scene_records'],doc.spaces,spaces,doc.schematic.size)
+    doc.set_spaces(doc.spaces if spaces is None else spaces,action,doc.active_space_id if doc.active_space_id in {s['id'] for s in (doc.spaces if spaces is None else spaces)} else None,sync_scene=False)
     record=doc.undo_stack[-1];record['analysis_before']=before;record['analysis_after']=copy.deepcopy(state);doc.analysis_state=state
     doc.space_candidates=copy.deepcopy(state.get('last_result',{}).get('candidates',[]));doc.space_revision=doc.revision
 
@@ -84,6 +89,13 @@ def crop(c,b,size):
 
 def apply_rules(result,state,size):
     result=copy.deepcopy(result)
+    excluded=set(state.get('scene_excluded_shapes',[]))
+    if excluded:
+        hidden_ids={c['id'] for c in result['candidates'] if c['fingerprint'] in excluded}
+        result['candidates']=[c for c in result['candidates'] if c['id'] not in hidden_ids]
+        result['connections']=[link for link in result.get('connections',[]) if not hidden_ids.intersection(link.get('spaces',[]))]
+        for c in result['candidates']:
+            if 'adjacent_spaces' in c:c['adjacent_spaces']=[a for a in c['adjacent_spaces'] if a['id'] not in hidden_ids]
     for c in result['candidates']:
         original=c['fingerprint'];c['source_fingerprint']=original
         decision=state.get('decisions',{}).get(original)
@@ -98,6 +110,8 @@ def apply_rules(result,state,size):
             else:
                 b=Bounds(tuple(rule['lo']),tuple(rule['hi']))
                 if intersects(Bounds(tuple(c['lo']),tuple(c['hi'])),b):crop(c,b,size)
+    from collections import Counter
+    result['counts']=dict(Counter(c['decision'] for c in result['candidates']))
     return result
 
 def register(doc,result,automatic=True,ids=None):
@@ -116,7 +130,7 @@ def register(doc,result,automatic=True,ids=None):
         if c.get('space_facts',{}).get('usability')=='restricted':
             if automatic:continue
             raise ValueError('머리 공간이 부족한 빈 공간입니다. 일반 공간으로 등록할 수 없습니다.')
-        if c.get('space_class') in ('exterior_or_merged','exterior_air','sky_exposed','exposed_deck'):
+        if c.get('space_class') in ('exterior_or_merged','exterior_air','sky_exposed','exposed_deck','unresolved_exterior_merge'):
             if automatic:continue
             raise ValueError('외부 공기/큰 미분리 후보는 방으로 등록하지 않습니다. 작은 경계로 보정하거나 재분석하세요.')
         if automatic and c['decision']!='auto':continue
@@ -139,7 +153,7 @@ def register(doc,result,automatic=True,ids=None):
         s=new_space(c['volume_runs'],doc.schematic.size,'3D 공간 '+str(len(spaces)+1),'미지정');s.update(origin='auto' if automatic else 'manual',auto_registered=automatic,recognition={'fingerprint':c['fingerprint'],'source_fingerprint':c.get('source_fingerprint',c['fingerprint']),'method':c.get('method','3d_air_components'),'engine_id':c.get('engine_id','legacy' if c.get('method')=='exterior_voxel_mesh' else '3d_air_components'),'checks':c['checks'],'mesh':c.get('mesh'),'virtual_boundary':c.get('virtual_boundary')})
         spaces.append(s);added.append(s['id']);
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
-        c['decision']='registered';c['confirmed']=True
+        c['decision']='registered';c['confirmed']=True;c['registered_space_id']=s['id']
         if result.get('provenance'):
             s['provenance']=copy.deepcopy(result['provenance'])
             s['provenance']['origin']='automatic' if automatic else 'approved_candidate'

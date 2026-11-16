@@ -45,6 +45,9 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     from .structural_recognition import ENGINES
     if engine not in ENGINES:
         raise ValueError(f'지원하지 않는 공간 인식 엔진: {engine}')
+    precision = engine == 'precision'
+    if precision:
+        engine = 'integrated'
     state = getattr(doc,'analysis_state',{})
     prior = state.get('last_result',{})
     marks = [] if prior.get('block_epoch')!=doc.block_epoch or prior.get('archive_read_only') or state.get('session_side')=='old' else prior.get('structure_review',{}).get('manual_boundaries',[])
@@ -168,6 +171,11 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             legacy_mask=legacy_domain.pop()&air
             domain |= legacy_mask
             k,band_info=supported_bands(labels,k,domain,hull,geometry,edges,queue,bounds,supported_pieces,cancel)
+            if precision:
+                from .recognition_precision import split_deck_bands
+                k,precision_bands=split_deck_bands(labels,k,hull,geometry,edges,queue,bounds,raw_exterior,band_info,cancel)
+                band_info.update(precision_bands)
+                structural['precision_bands']=list(precision_bands.values())
             missing=domain&(labels==0)
             local,n=label_remaining(missing,edges,queue,cancel,source=discovery_sources)
             labels[missing]=local[missing]+k
@@ -241,6 +249,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
                 decision['deck_subdivision']=True
     # Sparse exact cells, counters and virtual boundaries; no per-voxel Python objects.
     runs=defaultdict(list);run_count=0;counts=Counter();raw_counts=Counter();feet=Counter();heads=Counter();patches=Counter();virtual=Counter();pairs=Counter();interfaces=[];unknown=set();surface_samples=[]
+    portal_positions={}
     known={i for i,s in sc.palette.items() if s.startswith('minecraft:') and not any(t in s for t in ('stairs','slab','fence','pane','door','trapdoor','water','lava','carpet','snow','leaves'))}
     for y in range(H):
         checkpoint(cancel);row=labels[y];ids,num=np.unique(row[row>0],return_counts=True);counts.update(dict(zip(map(int,ids),map(int,num))));ids,num=np.unique(row[raw_exterior[y]&(row>0)],return_counts=True);raw_counts.update(dict(zip(map(int,ids),map(int,num))))
@@ -298,8 +307,16 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             if sign==1:
                 between=cut&(near>0);left=labels[between];right=near[between]
                 if len(left):
-                    ps,ns=np.unique(np.sort(np.stack([left,right],axis=1),axis=1),axis=0,return_counts=True)
-                    for pair,count in zip(ps,ns):pairs[tuple(map(int,pair))]+=int(count)
+                    ps,first,ns=np.unique(np.sort(np.stack([left,right],axis=1),axis=1),axis=0,return_index=True,return_counts=True)
+                    points=np.argwhere(between) if precision else None
+                    for pair,i,count in zip(ps,first,ns):
+                        key=tuple(map(int,pair))
+                        pairs[key]+=int(count)
+                        if precision and key not in portal_positions:
+                            y,z,x=map(int,points[i])
+                            other=[x,y,z]
+                            other[(1,2,0)[axis]]-=sign
+                            portal_positions[key]=[[x+x0,y+y0,z+z0],[p+q for p,q in zip(other,bounds.lo)]]
             for y in range(H):
                 checkpoint(cancel);yy=y-sign if axis==0 else y
                 if not 0<=yy<H:continue
@@ -425,6 +442,9 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
     by_label={c['virtual_boundary']['label']:c['id'] for c in candidates};portals=[]
     for (a,b),area in pairs.items():
         if a in by_label and b in by_label:portals.append({'spaces':[by_label[a],by_label[b]],'unit_faces':area,'kind':'virtual_partition','traversability':'uncertain','reason':'space segmentation is independent of movement connectivity'})
+    if precision:
+        for portal,(a,b) in zip(portals,(key for key in pairs if all(i in by_label for i in key))):
+            portal['positions']=portal_positions[(a,b)]
     neighbours=defaultdict(list)
     for portal in portals:
         a,b=portal['spaces']
@@ -470,6 +490,12 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
             part['candidate_id']=by_label.get(part['label'])
     for decision in partition_decisions:
         decision['source_ids']=['EXT-'+f[:12] for f in decision.get('source_fingerprints',[])]
+    if precision:
+        from .recognition_precision import annotate_fragments
+        structural['fragment_counts']=annotate_fragments(candidates,pairs,by_label,cancel)
+        for c in candidates:
+            c['engine_id']='precision'
+            c['algorithm_version']=ENGINES['precision']
     review = None
     if structure_review:
         if progress:progress(95,'관측 외벽·갑판·개구부 및 부분 구획 분석')
@@ -487,7 +513,7 @@ def scan(doc,bounds,progress=None,cancel=None,partial=False,*,ignore_terrain=Tru
                 candidate['structural_partition']=record['partition_status']
                 if engine=='integrated':
                     candidate['space_facts']['membership']=record['hull_membership']
-    result={'method':METHOD,'algorithm_version':ENGINES[engine],'engine_id':engine,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair,'structure_review':structure_review},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
+    result={'method':METHOD,'algorithm_version':ENGINES['precision' if precision else engine],'engine_id':'precision' if precision else engine,'settings':{'ignore_terrain':ignore_terrain,'repair_partitions':repair,'structure_review':structure_review},'terrain':terrain_info,'partition_decisions':partition_decisions,'deck_complexes':list(deck_complexes.values()),'structure_counts':dict(Counter(c['structure_class'] for c in candidates)),'revision':revision,'block_epoch':epoch,'scope':{'lo':list(bounds.lo),'hi':list(bounds.hi)},'partial':partial,'candidates':candidates,'counts':dict(Counter(c['decision'] for c in candidates)),'component_count':k,'limited':bool(omitted),'omitted_candidate_count':omitted,'domain_cells':int(domain.sum()),'retained_candidate_cells':sum(c['volume'] for c in candidates),'omitted_domain_cells':int(domain.sum())-sum(c['volume'] for c in candidates),'domain_unassigned_cells':int((domain&(labels==0)).sum()),'exterior_air_cells':int(raw_exterior.sum()),'interior_raw_cells':int((air&~raw_exterior).sum()),'outside_envelope_air_cells':int((air&~domain).sum()),'shell_unit_faces':dict(shell_faces),'shell_face_runs':shell_runs,'shell_runs_omitted':shell_runs_omitted,'virtual_boundary_sample':interfaces,'virtual_boundary_samples_truncated':sum(virtual.values())>len(interfaces),'connections':portals,'semantic_features':devices,'semantic_features_limit':2048,'mesh_failures':mesh_failures,'merge_reanalyses':reanalyses,'elapsed_seconds':round(time.perf_counter()-started,6),'note':'시험적 외관 투영+복셀 인식. 가상 개구 경계와 방 분할은 검토 대상이며 원본을 변경하지 않습니다.'}
     if structural:
         result['structural_generation']=structural
     if review is not None:

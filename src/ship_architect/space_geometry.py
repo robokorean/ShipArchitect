@@ -48,7 +48,7 @@ def request_geometry(view,key,runs):
     def finished():view.geometry_worker=None;view.update()
     job.result.connect(accept);job.failed.connect(fail);job.finished.connect(finished);job.finished.connect(job.deleteLater);job.start()
 
-def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=True):
+def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=True,highlight=False):
     from PySide6.QtCore import Qt,QPointF
     from PySide6.QtGui import QColor,QPolygonF,QPen
     from .display import visible_space_runs
@@ -60,11 +60,16 @@ def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=T
     selected_id=getattr(view,'selected_candidate_id',None) if candidates else view.doc.active_space_id
     if candidates:
         spaces=sorted(spaces,key=lambda s:s['id']!=selected_id)
-    if getattr(view,'interaction_active',False):
+    if getattr(view,'interaction_active',False) and not highlight:
         spaces=[s for s in spaces if s['id']==selected_id]
-    budget=2500 if getattr(view,'interaction_active',False) else 50000;warn=False
+    budget=2500 if getattr(view,'interaction_active',False) else 50000
+    if not highlight and spaces_override is None and getattr(view,'scene_selection',set()):
+        budget=min(budget,12000)
+    warn=False
     for space in spaces:
         if spaces_override is None and not space_visible(view,space,candidates):continue
+        if spaces_override is None and ('candidate:' if candidates else 'space:')+space['id'] in getattr(view,'scene_selection',set()):
+            continue
         if not candidates and spaces_override is None and view.exact_space_only and space['id']!=view.doc.active_space_id:continue
         runs=space.get('volume_runs') if candidates else space['runs']
         if not runs:continue
@@ -113,8 +118,8 @@ def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=T
         q,n=all_quads,all_normals;ii=np.flatnonzero(np.sum(n*view.camera(),axis=1)>1e-6)
         if len(ii)>budget:warn=True;continue
         budget-=len(ii);q=q[ii];pixels=view.project(q.reshape(-1,3)).reshape(-1,4,2);depth=np.mean(q@view.camera(),axis=1);order=np.argsort(depth)
-        selected=space['id']==selected_id
-        color='#ffc95f' if selected else '#54bfc9' if candidates else space_color(space)
+        selected=highlight or space['id']==selected_id
+        color=space.get('color','#ffce62') if highlight else '#ffc95f' if selected else '#54bfc9' if candidates else space_color(space)
         c=QColor(color);c.setAlpha(space.get('opacity',60) if spaces_override is not None else space_alpha(view,space,candidates));painter.setBrush(c);painter.setBrush(c)
         edge=QColor(c);edge.setAlpha(110 if candidates else 135);painter.setPen(QPen(edge,.65,Qt.PenStyle.DashLine if candidates else Qt.PenStyle.SolidLine))
         if not selected:painter.setPen(Qt.PenStyle.NoPen)
@@ -122,17 +127,28 @@ def draw_volumes(view,painter,candidates=False,spaces_override=None,selectable=T
         for i in order:
             screen=pixels[i]
             if screen[:,0].max()<0 or screen[:,1].max()<0 or screen[:,0].min()>view.width() or screen[:,1].min()>view.height():continue
+            if highlight and not view.workbench.selection_xray.isChecked() and view.occluded_point(q[i].mean(axis=0)):
+                continue
             poly=QPolygonF([QPointF(*pt) for pt in screen]);painter.drawPolygon(poly)
-            if not candidates and selectable:view.space_hits.append((space['id'],poly))
-        if selected and spaces_override is None:
+            if selectable:
+                if highlight and space.get('_scene_key','').startswith('space:'):
+                    view.space_hits.append((space['id'],poly))
+                elif candidates or highlight:
+                    if hasattr(view,'scene_hits'):
+                        view.scene_hits.append((space.get('_scene_key','candidate:'+space['id']),poly,float(depth[i])))
+                else:
+                    view.space_hits.append((space['id'],poly))
+        if selected and (spaces_override is None or highlight):
             if not hasattr(view,'space_edge_cache'):view.space_edge_cache=OrderedDict()
             if key not in view.space_edge_cache:
                 if not getattr(view,'interaction_active',False):view.space_edge_cache[key]=feature_lines(all_quads,all_normals)
                 while len(view.space_edge_cache)>12:view.space_edge_cache.popitem(last=False)
             edges=view.space_edge_cache.get(key,np.empty((0,2,3),np.float32))
             if len(edges)<=12000:
-                screen=view.project(edges.reshape(-1,3)).reshape(-1,2,2);painter.setPen(QPen(QColor('#ffce62'),1.7))
-                for a,b in screen:painter.drawLine(QPointF(*a),QPointF(*b))
+                screen=view.project(edges.reshape(-1,3)).reshape(-1,2,2);painter.setPen(QPen(QColor(color),1.7))
+                for index,(a,b) in enumerate(screen):
+                    if not highlight or view.workbench.selection_xray.isChecked() or not view.occluded_point(edges[index].mean(axis=0)):
+                        painter.drawLine(QPointF(*a),QPointF(*b))
     painter.setBrush(Qt.BrushStyle.NoBrush)
     if warn:
         painter.setPen(QColor('#ffb78b'));painter.drawText(16,65,'공간 부피 표시 예산 초과: 선택 공간/층으로 좁히세요. 정확한 셀과 저장 데이터는 유지합니다.')

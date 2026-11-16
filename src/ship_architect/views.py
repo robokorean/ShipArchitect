@@ -163,7 +163,7 @@ class View3D(QWidget):
         self.render_request=None
         self.frame=None
         self.show_blocks=True;self.show_spaces=True;self.exact_space_only=False;self.ghost_floors=False
-        self.visible_y=None;self.floor_range=None;self.space_hits=[]
+        self.visible_y=None;self.floor_range=None;self.space_hits=[];self.scene_hits=[];self.scene_lines=[]
         self.render_factor=1.
         self.render_stats={}
         self.interactive_quads=np.empty((0,4,3),np.float32);self.interactive_materials=[];self.interactive_frames=0;self.interaction_active=False
@@ -453,11 +453,16 @@ class View3D(QWidget):
             pts = self.project([[0, grid_y, z], [w, grid_y, z]])
             p.drawLine(QPointF(*pts[0]), QPointF(*pts[1]))
         if self.show_blocks:
-            if self.frame is not None:p.drawImage(QRectF(self.rect()),self.frame)
+            if self.frame is not None:
+                bench=getattr(self,'workbench',None)
+                if bench is not None and getattr(self,'scene_selection',set()):
+                    p.setOpacity(bench.selection_opacity.value()/100)
+                p.drawImage(QRectF(self.rect()),self.frame)
+                p.setOpacity(1)
             if self.interaction_active:self.interactive_frames+=1
         p.setBrush(Qt.BrushStyle.NoBrush)
         self.box(p, self.doc.selection)
-        self.space_hits=[]
+        self.space_hits=[];self.scene_hits=[];self.scene_lines=[]
         if self.show_spaces:
             from .space_ui import draw_spaces_3d
             draw_spaces_3d(self,p)
@@ -468,6 +473,7 @@ class View3D(QWidget):
         if getattr(self,'candidate_boxes',[]):
             from .space_geometry import draw_volumes
             draw_volumes(self,p,candidates=True)
+        if workbench is not None:workbench.draw_selection_3d(p)
         if getattr(self,'validation_spaces',[]) and not self.interaction_active:
             from .space_geometry import draw_volumes
             draw_volumes(self,p,spaces_override=self.validation_spaces,selectable=False)
@@ -500,6 +506,19 @@ class View3D(QWidget):
             p.setPen(QColor('#ffba8a'))
             p.drawText(QRectF(20, 45, self.width()-40, 110), Qt.TextFlag.TextWordWrap, self.error)
         p.end();self.painting_frame=False
+
+    def occluded_point(self, xyz):
+        if not self.show_blocks or self.pick_buffer is None:return False
+        point=self.project([xyz])[0]
+        px,py=map(int,point*self.render_factor)
+        if not (0<=py<self.pick_buffer.shape[0] and 0<=px<self.pick_buffer.shape[1]):return False
+        index=int(self.pick_buffer[py,px])
+        if index<0:return False
+        quad,normal,_=self.pick_scene[index]
+        towards=self.camera()
+        denominator=float(normal@towards)
+        if abs(denominator)<1e-7:return False
+        return float(normal@(quad[0]-xyz))/denominator>.025
 
     def pick(self, point):
         if not self.show_blocks and not self.selection_mode:return None
@@ -579,19 +598,34 @@ class View3D(QWidget):
     def mouseReleaseEvent(self, event):
         self.interaction_active=False
         self.last_pick_position=event.position() if not self.moved else None
-        clicked=self.pick(event.position()) if self.doc and not self.moved and event.button()==Qt.MouseButton.LeftButton else None
+        clicked=self.pick(event.position()) if self.doc and not self.moved and event.button() in (Qt.MouseButton.LeftButton,Qt.MouseButton.RightButton) else None
         if self.selection_mode and self.drag_corner is not None and event.button()==Qt.MouseButton.LeftButton:
             end=self.pick(event.position())
             if end is not None:self.selected.emit(self.drag_corner,end)
             self.drag_corner=None
             self.selection_finished.emit()
-        if self.doc and not self.moved and event.button() == Qt.MouseButton.LeftButton:
-            if not self.selection_mode and not event.modifiers() & (Qt.KeyboardModifier.ShiftModifier|Qt.KeyboardModifier.ControlModifier):
-                for sid,polygon in reversed(self.space_hits):
-                    if polygon.containsPoint(event.position(),Qt.FillRule.OddEvenFill):
-                        self.space_picked.emit(sid);self.start=None;return
+        if self.doc and not self.moved and event.button() in (Qt.MouseButton.LeftButton,Qt.MouseButton.RightButton):
+            if not self.selection_mode and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                bench=getattr(self,'workbench',None)
+                hits=[('space:'+sid) for sid,polygon in reversed(self.space_hits)
+                      if polygon.containsPoint(event.position(),Qt.FillRule.OddEvenFill)]
+                hits.extend(key for key,polygon,_ in sorted(self.scene_hits,key=lambda v:-v[2])
+                            if polygon.containsPoint(event.position(),Qt.FillRule.OddEvenFill))
+                if bench is not None:
+                    p=np.array([event.position().x(),event.position().y()])
+                    for key,a,b in self.scene_lines:
+                        v=b-a
+                        t=float(np.clip((p-a)@v/max(float(v@v),1e-5),0,1))
+                        if np.linalg.norm(p-a-t*v)<6:hits.insert(0,key)
+                    actual=[k for k in bench.keys_at(clicked) if not k.startswith(('space:','candidate:'))] if clicked else []
+                    if bench.pick_scene(actual+hits,bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
+                        if event.button()==Qt.MouseButton.RightButton:
+                            bench.owner.space_tools.context_menu(bench.selection_key,event.globalPosition().toPoint())
+                        self.start=None;return
+                elif hits:
+                    self.space_picked.emit(hits[0][6:]);self.start=None;return
             xyz = clicked
-            if xyz is not None:
+            if xyz is not None and event.button()==Qt.MouseButton.LeftButton:
                 self.picked.emit(xyz, bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
         self.start = None
         if self.moved:

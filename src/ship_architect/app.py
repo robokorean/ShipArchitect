@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         hl=QVBoxLayout(hbox)
         self.history_view=QPlainTextEdit();self.history_view.setReadOnly(True);self.history_view.setMaximumHeight(140)
         hl.addWidget(self.history_view);side.addWidget(hbox)
-        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.9: 외형·갑판·개구부 · 2D/3D 구조 검증\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
+        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.10: 외형·갑판·개구부 · 2D/3D 구조 검증\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
         note.setWordWrap(True)
         note.setStyleSheet('color: #9cacc0;')
         side.addWidget(note)
@@ -892,20 +892,24 @@ class MainWindow(QMainWindow):
     def undo(self):
         self.reject()
         try:
+            command=self.doc.undo_stack[-1] if self.doc.undo_stack else {}
             changed=self.doc.undo()
             if changed is not None:
                 self.refresh_views(changed);self.refresh_zones()
                 if hasattr(self,'integrated_ui') and hasattr(self.integrated_ui,'tasks'):self.integrated_ui.tasks.attach()
+                if 'scene_view_before' in command:self.workbench.restore_scene_view(command['scene_view_before'])
                 if getattr(self.doc,'save_empty_spaces',False):self.space_manager.save_metadata()
         except Exception as e:self.error(e)
 
     def redo(self):
         self.reject()
         try:
+            command=self.doc.redo_stack[-1] if self.doc.redo_stack else {}
             changed=self.doc.redo()
             if changed is not None:
                 self.refresh_views(changed);self.refresh_zones()
                 if hasattr(self,'integrated_ui') and hasattr(self.integrated_ui,'tasks'):self.integrated_ui.tasks.attach()
+                if 'scene_view_after' in command:self.workbench.restore_scene_view(command['scene_view_after'])
                 if getattr(self.doc,'save_empty_spaces',False):self.space_manager.save_metadata()
         except Exception as e:self.error(e)
 

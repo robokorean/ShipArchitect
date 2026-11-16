@@ -17,7 +17,7 @@ import traceback
 import uuid
 import zipfile
 
-APP_VERSION = '0.9.3.9'
+APP_VERSION = '0.9.3.10'
 MAX_LOG_BYTES = 5 * 1024 * 1024
 ROTATIONS = 3
 _lock = threading.RLock()
@@ -183,6 +183,14 @@ def report(destination, *, document=None, ui_state=None):
                 comparison=state.get('comparison')
                 if comparison:
                     z.writestr('recognition_comparison.json',json.dumps(_clean({'scope':comparison['scope'],'matches':comparison['matches'],'old_only_ids':comparison.get('old_only_ids',[]),'new_only_ids':comparison.get('new_only_ids',[]),'old':{k:v for k,v in comparison['old'].items() if k not in ('candidates','shell_face_runs','structure_review')},'new':{k:v for k,v in comparison['new'].items() if k not in ('candidates','shell_face_runs','structure_review')} }),ensure_ascii=False,indent=2))
+                if 'scene_records' in state:
+                    with z.open('project_explorer.jsonl','w') as fd:
+                        for key, value in state['scene_records'].items():
+                            fd.write((json.dumps(_clean({'id':key,'item':value}),ensure_ascii=False)+'\n').encode())
+                        for key in state.get('scene_excluded',[]):
+                            fd.write((json.dumps({'excluded_id':key})+'\n').encode())
+                        for key in state.get('scene_excluded_shapes',[]):
+                            fd.write((json.dumps({'excluded_fingerprint':key})+'\n').encode())
                 with z.open('analysis_rules.jsonl','w') as fd:
                     for key,value in state.get('equipment_rules',{}).items():fd.write((json.dumps(_clean({'type':'equipment','id':key,'category':value}),ensure_ascii=False)+'\n').encode())
                     for rule in state.get('space_rules',[]):fd.write((json.dumps(_clean({'type':'space','rule':rule}),ensure_ascii=False)+'\n').encode())

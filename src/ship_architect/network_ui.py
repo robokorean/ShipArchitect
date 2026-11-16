@@ -21,6 +21,7 @@ def draw_route_3d(view,painter):
         if view.single_layer and not(min(path[i-1][1],path[i][1])<=view.layer<=max(path[i-1][1],path[i][1])):continue
         if view.cut and min(path[i-1][1],path[i][1])>view.layer:continue
         painter.drawLine(QPointF(*projected[i-1]),QPointF(*projected[i]))
+        if getattr(view,'route_key',None):view.scene_lines.append((view.route_key,projected[i-1],projected[i]))
     for point,label,color in ((projected[0],'S','#72e3a2'),(projected[-1],'G','#ff8f86')):
         painter.setPen(QPen(QColor(color),3));painter.drawEllipse(QPointF(*point),5,5);painter.drawText(QPointF(point[0]+6,point[1]-6),label)
     painter.drawText(16,85,'노란색: 통행 모델 경로 · 실제 게임 이동/장치 작동은 별도 확인')
@@ -118,24 +119,45 @@ class NetworkView(QWidget):
                 else:compressed.append(point)
             self.owner.view.route_path=compressed
             if path:
+                from .analysis_state import commit
+                from .scene_registry import stable_key
+                d=self.owner.doc
+                state=copy.deepcopy(d.analysis_state)
+                scene=state.setdefault('scene_records',{k:v for k,v in self.owner.workbench.records.items()
+                                                         if k.startswith(('equip:','connection:','lift:'))})
+                key=stable_key('route:',sorted((left,right)))
+                if key not in state.get('scene_excluded',[]):
+                    self.owner.view.route_key=key
+                    scene[key]={'positions':[list(p) for p in compressed],'label':'이동 경로',
+                                'spaces':[left,right],'status':'모델상 통행 가능','manual':True}
+                    commit(d,state,action='scene_route_register')
+                    self.owner.refresh_history()
+                    self.owner.workbench.rebuild_tree(True)
                 points=np.asarray(path);lo=tuple(int(max(0,a-2)) for a in points.min(axis=0));hi=tuple(int(min(dim-1,b+2)) for dim,b in zip(self.owner.doc.schematic.size,points.max(axis=0)))
                 self.owner.view.focus_bounds=Bounds(lo,hi);self.owner.view.zoom=1.;self.owner.view.pan[:]=0;self.owner.view.schedule_render()
             self.owner.view.update();self.owner.space_manager.plan.update();self.status.setText(f"{STATUS[result['status']]} · 경로 {result.get('steps',0):,}칸 · 공간 2D 편집 또는 분할 화면에서 확인")
         self.owner.run_operation(lambda p,c:nav.route(left,right,c),done,'방 사이 경로 탐색')
     def clear_route(self):
-        self.owner.view.route_path=[];self.owner.view.update()
+        self.owner.view.route_path=[];self.owner.view.route_key=None;self.owner.view.update()
         if hasattr(self.owner,'space_manager'):self.owner.space_manager.plan.update()
     def focus(self):
         sid=self.source.currentData()
         if sid:self.owner.space_manager.select_id(sid);self.owner.view.focus_selection();self.owner.tabs.setCurrentWidget(self.owner.split_tab if self.owner.split_mode.isChecked() else self.owner.view)
-    def scan_equipment(self):
+    def scan_equipment(self,*_,persist=True):
         if hasattr(self,'pages'):
             self.pages.setCurrentIndex(2);self.owner.integrated_ui.tasks.show(self.table)
         d=self.owner.doc
         if self.owner.operation is not None:return
         signature=self.signature()
         def done(result):
-            if signature==self.signature():self.equipment=result;self.analysis_doc=d;self.snapshot=signature;self.show_equipment();getattr(self,'equipment_details',self.details).setPlainText(json.dumps({k:v for k,v in result.items() if k not in ('records','position_runs')},ensure_ascii=False,indent=2));
+            if signature!=self.signature():return
+            if persist and hasattr(self.owner,'workbench'):
+                from .scene_registry import discover
+                from .analysis_state import commit
+                state=copy.deepcopy(d.analysis_state)
+                state['scene_records']=discover(d,state.get('last_result',{}),result,None,state)
+                if state!=d.analysis_state:commit(d,state,action='scene_equipment_register');self.owner.refresh_history()
+            if self.owner.doc is d:self.equipment=result;self.analysis_doc=d;self.snapshot=signature;self.show_equipment();getattr(self,'equipment_details',self.details).setPlainText(json.dumps({k:v for k,v in result.items() if k not in ('records','position_runs')},ensure_ascii=False,indent=2));
             if hasattr(self.owner,'workbench'):self.owner.workbench.rebuild_tree(True)
         self.owner.run_operation(lambda p,c:inventory(d,p,c),done,'모드 설비 분석')
     def equipment_filter_changed(self,*_):

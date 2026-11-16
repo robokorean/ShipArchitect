@@ -17,14 +17,16 @@ def external(space,doc):
 def visible(view,space,candidate=False):
     cfg=config(view)
     mode=cfg.get('mode','both')
-    if mode=='none' or (candidate and mode=='confirmed') or (not candidate and mode in ('candidates','changed','recovered','uncertain')):
+    if mode=='none' or (candidate and mode=='confirmed') or (not candidate and mode in ('candidates','changed','recovered','uncertain','fragments')):
         return False
     if candidate and mode=='changed':
         if space['id'] not in getattr(view,'changed_candidate_ids',set()):
             return False
     if candidate and mode=='recovered' and not space.get('discovery',{}).get('legacy_only_cells'):return False
     if candidate and mode=='uncertain' and space.get('decision') not in ('review','exclude'):return False
-    inspect_mode=mode in ('recovered','uncertain')
+    if candidate and mode=='fragments' and not space.get('fragment'):return False
+    if candidate and space.get('decision')=='registered' and space.get('engine_id')=='precision':return False
+    inspect_mode=mode in ('recovered','uncertain','fragments')
     if candidate and space.get('decision')=='exclude' and not cfg.get('external',False) and not inspect_mode:
         return False
     if candidate and not cfg.get('show_candidates',True):return False

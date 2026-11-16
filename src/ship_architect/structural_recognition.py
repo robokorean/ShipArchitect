@@ -6,8 +6,8 @@ from .chunks import checkpoint
 from .spatial3d import next_seed
 from .structure_review import adjacent
 
-ENGINES = {'legacy':'0.9.3.4.1', 'structural':'0.9.3.7-structural', 'hybrid37':'0.9.3.7-hybrid', 'hybrid':'0.9.3.8-hybrid','integrated':'0.9.3.9-integrated'}
-ENGINE_NAMES = {'legacy':'Legacy · v0.9.3.6', 'structural':'Structural · 구조', 'hybrid':'Hybrid · 0.9.3.8', 'hybrid37':'Hybrid · 0.9.3.7 비교용', 'integrated':'통합 · 0.9.3.9'}
+ENGINES = {'legacy':'0.9.3.4.1', 'structural':'0.9.3.7-structural', 'hybrid37':'0.9.3.7-hybrid', 'hybrid':'0.9.3.8-hybrid','integrated':'0.9.3.9-integrated','precision':'0.9.3.10-precision'}
+ENGINE_NAMES = {'legacy':'Legacy · v0.9.3.6', 'structural':'Structural · 구조', 'hybrid':'Hybrid · 0.9.3.8', 'hybrid37':'Hybrid · 0.9.3.7 비교용', 'integrated':'통합 · 0.9.3.9 비교용','precision':'통합 정밀 · 0.9.3.10'}
 
 
 @njit(cache=True, nogil=True)

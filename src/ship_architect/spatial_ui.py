@@ -56,20 +56,37 @@ class SpatialBatch:
                 for c in copies:
                     if not intersects(Bounds(tuple(c['lo']),tuple(c['hi'])),b):c['source_block_epoch']=d.block_epoch
                 r['candidates']+=copies
-                r['candidates']=r['candidates'][:MAX_ANALYSIS_CANDIDATES if key=='integrated' else 512]
+                r['candidates']=r['candidates'][:MAX_ANALYSIS_CANDIDATES if key in ('integrated','precision') else 512]
             from .analysis_sessions import provenance
             r['provenance']=provenance(d,r['method'],'partial' if partial else 'scope_scan',r)
             prepared=register(d,r,True) if auto else (d.spaces,r,[])
-            return r,prepared
+            if key=='precision':
+                from .scene_registry import discover
+                from .equipment import inventory
+                progress(98,'프로젝트 탐색기 · 설비 및 이동 관련 등록')
+                assets=inventory(d,lambda n,m:progress(98+n//50,m),cancel)
+                scene=discover(d,r,assets,cancel,state)
+            else:
+                assets=scene=None
+            return r,prepared,assets,scene
         def done(value):
             if w.doc is not d or d.revision!=revision:self.panel.status.setText('분석 중 문서가 바뀌어 결과를 폐기했습니다. 재시도하세요.');return
-            r,(spaces,r,added)=value;r['counts']=dict(Counter(c['decision'] for c in r['candidates']));state['last_result']=r
+            r,(spaces,r,added),assets,scene=value
+            if scene is not None:
+                state['scene_records']=scene
+            r['counts']=dict(Counter(c['decision'] for c in r['candidates']));state['last_result']=r
             for key in ('session_reference','session_changes','session_side'):state.pop(key,None)
             commit(d,state,spaces,'space_auto_batch' if auto else 'space_analysis');self.result=r;self.panel.result=r
             dirty=d.spatial_dirty
             if dirty is None or all(b.lo[i]<=dirty.lo[i]<=dirty.hi[i]<=b.hi[i] for i in range(3)):d.spatial_dirty=None
             d.analysis_display_origin='현재 분석'
-            self.refresh();w.space_manager.refresh();w.refresh_history();self.sessions.describe();self.panel.status.setText(f'3D 완료 · 자동 등록 {len(added)}개 · '+str(dict(Counter(c['decision'] for c in r['candidates'])))+' · 블록 변경 없음')
+            self.refresh();w.space_manager.refresh()
+            if assets is not None:
+                w.network_view.equipment=assets
+                w.network_view.analysis_doc=d
+                w.network_view.snapshot=w.network_view.signature()
+                w.workbench.rebuild_tree(True)
+            w.refresh_history();self.sessions.describe();self.panel.status.setText(f'3D 완료 · 자동 등록 {len(added)}개 · '+str(dict(Counter(c['decision'] for c in r['candidates'])))+' · 블록 변경 없음')
             event('space_batch_committed',trace_id=r.get('trace_id'),registered=len(added),partial=partial,scope=r['scope'])
         if hasattr(w,'integrated_ui') and hasattr(w.integrated_ui,'tasks'):w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
         w.run_operation(work,done,ENGINE_NAMES.get(key,'기존 3D')+' · '+ENGINES.get(key,'0.9.3')+(' · 변경 구역' if partial else ' · 공간 분석'))
@@ -150,9 +167,9 @@ class SpatialBatch:
                 r.update(apply_rules(r,state,self.owner.doc.schematic.size))
             self.record('space_crop_rule',transform)
         except Exception as e:self.owner.error(e)
-    def confirm(self):
+    def confirm(self,ids=None):
         try:
-            w=self.owner;d=w.doc;chosen=self.selected();pending={c['id'] for c in chosen if c.get('decision')!='registered'}
+            w=self.owner;d=w.doc;chosen=self.selected() if ids is None else [c for c in d.space_candidates if c['id'] in ids];pending={c['id'] for c in chosen if c.get('decision')!='registered'}
             if not chosen:raise ValueError('등록할 후보를 선택하세요.')
             if w.operation is not None or w.loading:return
             if d.analysis_state.get('session_side')=='old':raise ValueError('저장 비교는 읽기 전용입니다. 신규 결과로 전환하세요.')
@@ -162,7 +179,7 @@ class SpatialBatch:
                 if c['id'] in {c['id'] for c in chosen} and c['decision']=='registered':state.setdefault('decisions',{})[c.get('source_fingerprint',c['fingerprint'])]={'action':'registered',**({'runs':copy.deepcopy(c['volume_runs'])} if c.get('user_modified') else {})}
             zones=copy.deepcopy(d.zones);commit(d,state,spaces,'space_manual_batch');record=d.undo_stack[-1];record['zones_before']=zones
             for c in chosen:
-                if c['id'] in pending and added and any(q['id']==c['id'] and q['decision']=='registered' for q in r['candidates']):d.zones.append({'name':'확인 공간 '+c['id'],'lo':c['lo'],'hi':c['hi'],'space_footprint':c['footprint'],'space_kind':c['kind'],'space_volume_runs':copy.deepcopy(c['volume_runs']),'space_method':c.get('method')})
+                if c['id'] in pending and added and any(q['id']==c['id'] and q['decision']=='registered' for q in r['candidates']):d.zones.append({'name':'확인 공간 '+c['id'],'lo':c['lo'],'hi':c['hi'],'space_footprint':c['footprint'],'space_kind':c['kind'],'space_volume_runs':copy.deepcopy(c['volume_runs']),'space_method':c.get('method'),'registered_space_id':next((q.get('registered_space_id') for q in r['candidates'] if q['id']==c['id']),None)})
             record['zones_after']=copy.deepcopy(d.zones);self.result=r;self.refresh();w.space_manager.refresh();w.refresh_zones();w.refresh_history();self.panel.status.setText(f'정확한 3D 공간 {len(added)}개 등록. 기존 겹치는 공간은 보호합니다.')
         except Exception as e:self.owner.error(e)
     def clear_compare(self):

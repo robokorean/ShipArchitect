@@ -102,12 +102,20 @@ class SpacePlan(LayerView):
     def mouseMoveEvent(self,e):
         if self.drag is not None:self.end=self.coord(e.position());self.update()
     def mouseReleaseEvent(self,e):
+        bench=getattr(self.manager.owner,'workbench',None)
+        if e.button()==Qt.MouseButton.RightButton:
+            target=self.coord(e.position())
+            if target is not None and bench is not None and bench.pick_scene(bench.keys_at(target)):
+                self.manager.owner.space_tools.context_menu(bench.selection_key,e.globalPosition().toPoint())
+            return
         if self.drag is None:return
         end=self.coord(e.position());start=self.drag;self.drag=None;self.end=None
         if end is None:return
         m=self.manager
         if m.edit_mode.currentData()=='select':
-            if start==end:m.select_at(end)
+            if start==end:
+                if bench is None or not bench.pick_scene(bench.keys_at(end),bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)):
+                    m.select_at(end)
             else:m.owner.set_selection(Bounds.between(start,end))
         else:m.edit_bounds(Bounds.between(start,end),m.edit_mode.currentData())
         self.update()

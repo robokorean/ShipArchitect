@@ -84,6 +84,11 @@ def validate_settings(value,size):
     """Discard malformed view metadata without granting access or changing block data."""
     if not isinstance(value,dict):return {}
     out={}
+    color=value.get('highlight_color','')
+    if isinstance(color,str) and len(color)==7 and color[0]=='#' and all(c in '0123456789abcdefABCDEF' for c in color[1:]):
+        out['highlight_color']=color
+    if type(value.get('selection_xray')) is bool:out['selection_xray']=value['selection_xray']
+    if type(value.get('selection_opacity')) is int:out['selection_opacity']=max(15,min(100,value['selection_opacity']))
     for key,allowed in {'axis':('none','X','Y','Z'),'side':('below','above','slice'),'plane_orientation':('평면도 (위)','정면도','후면도','좌측면도','우측면도'),'selected_kind':('block','space','equipment','connection','path')}.items():
         if value.get(key) in allowed:out[key]=value[key]
     for key in ('position','layer','plane_slice'):
@@ -106,7 +111,7 @@ def validate_settings(value,size):
         p={}
         for k in ('normal_alpha','candidate_alpha'):
             if type(cfg.get(k)) is int:p[k]=max(0,min(255,cfg[k]))
-        if cfg.get('mode') in ('both','confirmed','candidates','changed','none','recovered','uncertain'):p['mode']=cfg['mode']
+        if cfg.get('mode') in ('both','confirmed','candidates','changed','none','recovered','uncertain','fragments'):p['mode']=cfg['mode']
         if cfg.get('geometry') in ('mesh','bounds'):p['geometry']=cfg['geometry']
         for k in ('external','only_selected','show_candidates'):
             if type(cfg.get(k)) is bool:p[k]=cfg[k]
