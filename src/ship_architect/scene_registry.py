@@ -106,6 +106,8 @@ def prune_relationships(records, space_ids, candidate_ids):
 def delete_items(doc, space_ids, candidate_ids, scene_keys, exclude=False, fallback=None):
     """Delete all requested metadata in one existing document history command."""
     state = copy.deepcopy(doc.analysis_state)
+    from .space_organization import prune_memberships
+    prune_memberships(state,{'candidate:'+v for v in candidate_ids}|{'space:'+v for v in space_ids})
     scene = state.setdefault('scene_records', copy.deepcopy(fallback or {}))
     for key in scene_keys:
         scene.pop(key, None)
@@ -140,6 +142,7 @@ def delete_items(doc, space_ids, candidate_ids, scene_keys, exclude=False, fallb
         result['candidates'] = retained
         result['counts'] = dict(Counter(c['decision'] for c in retained))
         prune_candidate_relations(result, deleted_candidates)
+        prune_memberships(state,{'candidate:'+key for key in deleted_candidates})
     if exclude:
         state['scene_excluded_shapes'] = sorted(set(state.get('scene_excluded_shapes', [])) | shapes)
     if candidate_ids:

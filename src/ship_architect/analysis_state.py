@@ -11,6 +11,8 @@ def validate(value,size):
     if not isinstance(value,dict) or len(json.dumps(value))>48_000_000:raise ValueError('분석 설정 형식/48MB 한도 오류')
     from .scene_registry import validate_scene
     validate_scene(value,size)
+    from .space_organization import validate_memberships
+    validate_memberships(value.get('space_memberships',{}))
     state=copy.deepcopy(value);rules=state.setdefault('equipment_rules',{})
     if not isinstance(rules,dict) or len(rules)>4096:raise ValueError('설비 규칙 수 오류')
     for key,val in rules.items():
@@ -63,12 +65,12 @@ def validate(value,size):
         if len(comparison.get('matches',[]))>512:raise ValueError('비교 쌍 한도 초과')
     return state
 
-def commit(doc,state,spaces=None,action='analysis_settings'):
+def commit(doc,state,spaces=None,action='analysis_settings',*,active=None):
     state=validate(state,doc.schematic.size);before=copy.deepcopy(doc.analysis_state)
     if spaces is not None and state.get('scene_records'):
         from .scene_registry import bind_spaces
         bind_spaces(state['scene_records'],doc.spaces,spaces,doc.schematic.size)
-    doc.set_spaces(doc.spaces if spaces is None else spaces,action,doc.active_space_id if doc.active_space_id in {s['id'] for s in (doc.spaces if spaces is None else spaces)} else None,sync_scene=False)
+    doc.set_spaces(doc.spaces if spaces is None else spaces,action,(active or doc.active_space_id) if (active or doc.active_space_id) in {s['id'] for s in (doc.spaces if spaces is None else spaces)} else None,sync_scene=False)
     record=doc.undo_stack[-1];record['analysis_before']=before;record['analysis_after']=copy.deepcopy(state);doc.analysis_state=state
     doc.space_candidates=copy.deepcopy(state.get('last_result',{}).get('candidates',[]));doc.space_revision=doc.revision
 

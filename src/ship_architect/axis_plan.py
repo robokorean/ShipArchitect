@@ -99,6 +99,7 @@ class PlaneCanvas(QWidget):
                 if owner.view.display_state.contains_xyz(end,owner.doc,owner.view):owner.picked(end)
                 if not self.panel.inspect.isChecked():owner.space_manager.select_at(end)
             else:owner.set_selection(Bounds.between(start,end))
+        elif mode=='split':owner.workbench.space_review.split(Bounds.between(start,end))
         else:owner.space_manager.edit_bounds(Bounds.between(start,end),mode)
         self.panel.refresh()
 

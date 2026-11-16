@@ -44,6 +44,8 @@ class SpaceTools(QObject):
         if confirm and QMessageBox.question(w,'공간 관리 데이터 삭제',f'선택 공간 {len(ids)}개를 삭제합니다. 실제 블록/NBT는 유지됩니다.\n'+('동일 형상 인식 제외도 등록합니다.' if exclude else '재분석 시 다시 등록될 수 있습니다.'),QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:return
         if w.proposal is not None:w.reject()
         state=copy.deepcopy(d.analysis_state)
+        from .space_organization import prune_memberships
+        prune_memberships(state,{'space:'+sid for sid in ids})
         for s in d.spaces:
             if s['id'] not in ids:continue
             fp=s.get('recognition',{}).get('source_fingerprint') or s.get('recognition',{}).get('fingerprint')
@@ -154,12 +156,12 @@ class SpaceTools(QObject):
             action.setCheckable(True)
             action.setChecked(key==self.mode.currentData())
         menu.addSeparator()
+        menu.addAction('공간 표시 필터',self.b.space_review.filter_dialog)
         menu.addAction('전체 다시 표시',self.show_all)
         menu.exec(QCursor.pos())
 
     def show_all(self):
-        self.w.view.space_display['visibility']={}
-        self.w.view.space_display['show_candidates']=True
+        self.w.view.space_display.update(visibility={},organized=False,min_volume=0,use_filter='all',show_candidates=True)
         self.w.space_view.overlay.setChecked(True)
         self.w.space_manager.overlays.setChecked(True)
         self.only.setChecked(False)
@@ -187,7 +189,13 @@ class SpaceTools(QObject):
         if self.candidate_ids() or key.startswith('candgroup:'):
             menu.addAction('후보 확정·등록',lambda:self.w.space_view.bulk.confirm(
                 {k[10:] for k in self.b.keys_for_scope('group') if k.startswith('candidate:')}))
+        if self.candidate_ids():
+            menu.addAction('소속 변경·그룹에서 분리',self.b.space_review.change_membership)
+        if key.startswith(('candidate:','space:')) and key in self.b.records and not self.b.record_visible(key):
+            menu.addAction('이 공간 임시 보기',self.b.space_review.reveal_selected)
         if self.ids():
+            if len(self.ids())>1:menu.addAction('공간 합치기',self.b.space_review.merge)
+            else:menu.addAction('선택 부피로 분할',self.b.space_review.split)
             menu.addAction('이름 변경',self.rename)
             menu.addAction('분류·속성',lambda:self.w.integrated_ui.open_properties(0))
             menu.addAction('선택 공간만 보기',self.isolate_selected)

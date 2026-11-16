@@ -48,7 +48,7 @@ class Workbench:
         self.extended_highlight.toggled.connect(self.refresh_selection_overlay)
         lay.addWidget(self.extended_highlight)
         row=QHBoxLayout()
-        for text,fn in [('초점 F',self.focus),('목록 합치기',self.merge_selected),('펼치기',self.tree.expandAll),('접기',self.tree.collapseAll)]:
+        for text,fn in [('초점 F',self.focus),('펼치기',self.tree.expandAll),('접기',self.tree.collapseAll)]:
             button=QPushButton(text);button.clicked.connect(fn);row.addWidget(button)
         lay.addLayout(row);self.scene_dock=self.dock('프로젝트 탐색기','scene_tree',container,Qt.DockWidgetArea.LeftDockWidgetArea)
         # Move the existing editor, rather than duplicate it or its document state.
@@ -61,12 +61,16 @@ class Workbench:
         tabs.addTab(self.inspector,'개발자 상세 · 복사')
         tabs.setMaximumHeight(172)
         r.addWidget(tabs)
-        self.property_name=QLineEdit();self.property_name.setPlaceholderText('선택 공간 이름');self.property_purpose=QLineEdit();self.property_purpose.setPlaceholderText('선택 공간 용도');self.property_alpha=QSpinBox();self.property_alpha.setRange(0,255);self.property_alpha.setPrefix('알파 ');r.addWidget(self.property_name);r.addWidget(self.property_purpose);r.addWidget(self.property_alpha)
-        row=QHBoxLayout();apply=QPushButton('공간 속성 적용');apply.clicked.connect(self.apply_properties);row.addWidget(apply);color=QPushButton('공간 색상');color.clicked.connect(owner.space_manager.choose_color);row.addWidget(color);r.addLayout(row)
+        self.space_properties_controls=QWidget()
+        property_layout=QVBoxLayout(self.space_properties_controls)
+        property_layout.setContentsMargins(0,0,0,0)
+        r.addWidget(self.space_properties_controls)
+        self.property_name=QLineEdit();self.property_name.setPlaceholderText('선택 공간 이름');self.property_purpose=QLineEdit();self.property_purpose.setPlaceholderText('선택 공간 용도');self.property_alpha=QSpinBox();self.property_alpha.setRange(0,255);self.property_alpha.setPrefix('알파 ');property_layout.addWidget(self.property_name);property_layout.addWidget(self.property_purpose);property_layout.addWidget(self.property_alpha)
+        row=QHBoxLayout();apply=QPushButton('공간 속성 적용');apply.clicked.connect(self.apply_properties);row.addWidget(apply);color=QPushButton('공간 색상');color.clicked.connect(owner.space_manager.choose_color);row.addWidget(color);property_layout.addLayout(row)
         from .explorer_properties import edit_batch
         batch=QPushButton('선택 공간 일괄 속성')
         batch.clicked.connect(lambda:edit_batch(self))
-        r.addWidget(batch)
+        property_layout.addWidget(batch)
         owner.panel_scroll.setMaximumWidth(16777215);r.addWidget(owner.panel_scroll,1)
         self.editor_dock=self.dock('선택 속성·편집','properties_editor',right,Qt.DockWidgetArea.RightDockWidgetArea)
         self.view_panel=QWidget();vl=QVBoxLayout(self.view_panel)
@@ -226,6 +230,8 @@ class Workbench:
         except (OSError,ValueError,KeyError,TypeError):pass
         d=self.owner.doc
         self.owner.view.scene_selection=set()
+        self.owner.view.temporary_space=None
+        self.organization_key=None
         if d.source and not getattr(d,'from_project',False):
             p={}
         p=validate_settings(p,self.owner.doc.schematic.size)
@@ -375,6 +381,24 @@ class Workbench:
         origin=getattr(d,'analysis_display_origin','저장 결과')
         candidate_root=self.node(root,'인식 후보 · '+origin,'candidates',getattr(self.owner.view,'space_display',{}).get('show_candidates',True));candidate_groups={}
         from .space_display import external as external_space
+        from .space_organization import classify, LABELS
+        view=self.owner.view
+        result=d.analysis_state.get('last_result',{})
+        key=(id(d),id(d.space_candidates),id(d.spaces),id(result))
+        if getattr(self,'organization_key',None)!=key:
+            self.organization_key=key
+            view.space_classes=classify(dict(result,candidates=d.space_candidates),
+                                        d.analysis_state.get('space_memberships'),d.spaces)
+        organized=getattr(view,'space_display',{}).get('organized',False)
+        if organized:
+            candidate_root.setText(0,'공간 후보')
+            source.setText(0,'함선')
+            spaces.setText(0,'확정 공간')
+            review_root=self.node(root,'기타 검토 항목','review_classes',True)
+            root.removeChild(connections)
+            routes.addChild(connections)
+            candidates_parents={}
+            postponed=[]
         for rank,c in enumerate(d.space_candidates,1):
             if c.get('decision')=='registered':
                 continue
@@ -382,12 +406,21 @@ class Workbench:
             fragment=c.get('fragment',{}).get('kind')
             if fragment in ('attached_fragment','residual_air','exterior_air'):
                 label={'attached_fragment':'인접 공간 조각','residual_air':'잔여 공기','exterior_air':'외부 공기'}[fragment]
-            if label not in candidate_groups:candidate_groups[label]=self.node(candidate_root,label,'candgroup:'+label)
             key='candidate:'+c['id']
+            entry=view.space_classes.get(key)
+            if organized and entry:
+                label=LABELS[entry.kind]
+            if label not in candidate_groups:
+                parent=(review_root if organized and entry and entry.kind in ('residual','external','uncertain','attachment') else candidate_root)
+                candidate_groups[label]=self.node(parent,label,'candgroup:'+label)
+            parent=candidate_groups[label]
             volume=c.get('volume',c.get('area',0))
             kind='대형 공간' if volume>=10000 else '공간 조각' if fragment else '공간 후보'
             title=f"{kind} {rank:02d} · Y{c['lo'][1]}–{c['hi'][1]} · {volume:,}셀"
-            self.node(candidate_groups[label],title,key,space_visible(self.owner.view,c,True),label)
+            if organized and entry and entry.owner:
+                postponed.append((entry.owner,parent,title,key,c,label))
+            else:
+                self.node(parent,title,key,space_visible(view,c,True),label)
             self.records[key]=c
         for group in candidate_groups.values():
             states=[group.child(i).checkState(0) for i in range(group.childCount())]
@@ -408,6 +441,21 @@ class Workbench:
             if not meta:origin='저장 공간 · 이전 버전'
             self.nodes[key]=self.node(groups[group],s['name'],key,space_visible(self.owner.view,s),origin+' · '+s['purpose'])
             self.records[key]=s
+        if organized:
+            for owner,fallback,title,key,c,label in postponed:
+                parent=self.nodes.get(owner)
+                if parent is not None:
+                    group_key='attachments:'+owner
+                    if group_key not in candidates_parents:
+                        candidates_parents[group_key]=self.node(parent,'부속 조각',group_key,False)
+                    parent=candidates_parents[group_key]
+                else:
+                    parent=fallback
+                self.node(parent,title,key,space_visible(view,c,True),label)
+            for group in candidates_parents.values():
+                group.setText(0,f'부속 조각 {group.childCount()}개')
+            for group in candidate_groups.values():
+                group.setHidden(group.childCount()==0)
         for y in self.owner.space_manager.levels:self.nodes['floor:'+str(y)]=self.node(floors,'Y='+str(y),'floor:'+str(y),d.floor_visibility.get(str(y),True))
         path=getattr(self.owner.view,'route_path',[])
         if managed is None and path:
@@ -489,7 +537,7 @@ class Workbench:
             return match
         for i in range(self.tree.topLevelItemCount()):
             item=self.tree.topLevelItem(i)
-            allowed=wanted in ('all','favorites') or wanted==item.data(0,ROLE) or wanted=='connections' and item.data(0,ROLE)=='routes'
+            allowed=wanted in ('all','favorites') or wanted==item.data(0,ROLE) or wanted=='candidates' and item.data(0,ROLE)=='review_classes' or wanted=='connections' and item.data(0,ROLE)=='routes'
             if item.data(0,ROLE)=='equipment' and (query or favorites) and allowed:
                 for group in self.equip_type_nodes.values():
                     self.expand_equipment(group)
@@ -539,7 +587,10 @@ class Workbench:
         def walk(item, filtered):
             if filtered and item.isHidden():return set()
             key=item.data(0,ROLE)
-            if key in self.records:return {key}
+            if key in self.records:
+                if mode in ('visible_tree','all'):
+                    return {key}.union(*(walk(item.child(i),filtered) for i in range(item.childCount())))
+                return {key}
             if isinstance(key,str) and key.startswith('equiptype:') and not any(
                 item.child(i).data(0,ROLE) for i in range(item.childCount())
             ):
@@ -607,6 +658,7 @@ class Workbench:
 
     def record_visible(self,key):
         record=self.records[key]
+        if getattr(self.owner.view,'temporary_space',None)==key:return True
         if key.startswith('space:'):return self.owner.view.show_spaces and space_visible(self.owner.view,record) and (not self.owner.view.exact_space_only or record['id']==self.owner.doc.active_space_id)
         if key.startswith('candidate:'):return self.owner.space_view.overlay.isChecked() and space_visible(self.owner.view,record,True)
         if key in self.hidden_overlays:return False
@@ -639,11 +691,15 @@ class Workbench:
 
     def refresh_selection_overlay(self,*_):
         if not hasattr(self,'nodes'):return
+        if getattr(self.owner.view,'temporary_space',None)!=self.selection_key:
+            self.owner.view.temporary_space=None
         keys=self.keys_for_scope('group')
         ordered=sorted(keys,key=lambda k:(k!=self.selection_key,k))
-        count=32 if self.extended_highlight.isChecked() else 1 if len(keys)>4 else 4
+        count=32 if self.extended_highlight.isChecked() else 4 if (self.selection_key or '').startswith('attachments:') or len(keys)<=4 else 1
         self.owner.view.scene_selection=set(ordered[:count])
         self.owner.view.selected_candidate_id=next((key[10:] for key in ordered if key.startswith('candidate:')),None)
+        group=self.selection_key or ''
+        self.owner.view.related_spaces=set(ordered[:4]) if group.startswith('attachments:') else set()
         self.update_selection_count()
         self.owner.view.update()
         self.axis_plan.canvas.update()
@@ -674,9 +730,15 @@ class Workbench:
             self.owner.view.space_display['show_candidates']=value
             if value:self.owner.space_view.overlay.setChecked(True)
             self.owner.space_tools.refresh()
-        elif key.startswith('candidate:') or key.startswith('candgroup:'):
-            ids={c['id'] for c in d.space_candidates if key=='candidate:'+c['id'] or key.startswith('candgroup:') and 'candidate:'+c['id'] in self.nodes and self.nodes['candidate:'+c['id']].parent().data(0,ROLE)==key}
-            self.owner.space_tools.visibility(ids,value)
+        elif key.startswith(('candidate:','candgroup:','attachments:')) or key=='review_classes':
+            def children(node):
+                key=node.data(0,ROLE)
+                if key.startswith('candidate:'):
+                    yield key[10:]
+                    return
+                for index in range(node.childCount()):
+                    yield from children(node.child(index))
+            self.owner.space_tools.visibility(set(children(item)),value)
         elif key.startswith('floor:'):
             d.floor_visibility[key.split(':')[1]]=value;self.owner.space_manager.update_floor_range();self.apply()
         elif key.startswith('equip:'):
@@ -723,6 +785,7 @@ class Workbench:
         item=current if current in items else items[-1] if items else None
         key=item.data(0,ROLE) if item else None
         self.selection_key=key
+        if getattr(self.owner.view,'temporary_space',None)!=key:self.owner.view.temporary_space=None
         self.selected_xyz=None
         record=self.records.get(key)
         if record is None:
@@ -758,6 +821,8 @@ class Workbench:
             self.inspector.setPlainText(json.dumps({k:(v[:64] if k=='positions' else v) for k,v in record.items()
                                                   if k not in ('volume_runs','footprint')},ensure_ascii=False,indent=2))
         self.refresh_selection_overlay()
+        if hasattr(self,'space_review'):
+            self.space_review.update_selection(key)
         if record is not None and not self.record_visible(key):
             self.owner.statusBar().showMessage('숨겨진 분석 항목입니다. 탐색기의 표시 체크박스로 다시 표시할 수 있습니다.')
         self.timer.start()
@@ -787,7 +852,14 @@ class Workbench:
         from .spatial_ui import REASONS
         title=self.nodes[key].text(0) if key in self.nodes else record.get('name',record.get('label',key))
         names={space['id']:space['name'] for space in self.owner.doc.spaces}
-        self.summary_properties.setPlainText(format_record(record,title,names,REASONS))
+        text=format_record(record,title,names,REASONS)
+        entry=getattr(self.owner.view,'space_classes',{}).get(key)
+        if entry:
+            from .space_organization import LABELS
+            owner=self.nodes.get(entry.owner)
+            text+=f'\n관리 분류  {LABELS[entry.kind]} · {entry.reason}'
+            if owner is not None:text+='\n상위 공간  '+owner.text(0)
+        self.summary_properties.setPlainText(text)
 
     def inspect_space(self):
         space=self.owner.doc.active_space()
@@ -955,7 +1027,7 @@ class Workbench:
     def selection_records(self):
         selected=getattr(self.owner.view,'scene_selection',set())
         for key in sorted(selected,key=lambda key:(key!=self.selection_key,key)):
-            if key in self.records and self.record_visible(key):
+            if key in self.records and (self.record_visible(key) or key in getattr(self.owner.view,'related_spaces',set())):
                 yield key,self.records[key]
 
     def draw_selection_3d(self,painter):

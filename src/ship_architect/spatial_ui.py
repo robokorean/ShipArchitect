@@ -36,7 +36,7 @@ class SpatialBatch:
         self.sessions.filter.currentIndexChanged.connect(self.refresh)
     def selected(self):
         ids={i.data(Qt.ItemDataRole.UserRole) for i in self.panel.list.selectedItems()};return [c for c in self.owner.doc.space_candidates if c['id'] in ids]
-    def scan(self,auto=False,partial=False,whole=False,scope=None,engine_override=None):
+    def scan(self,auto=False,partial=False,whole=False,scope=None,engine_override=None,organize=False):
         w=self.owner;d=w.doc
         if w.operation is not None or w.loading:return
         b=scope or (partial_bounds(d) if partial else Bounds((0,0,0),tuple(n-1 for n in d.schematic.size)) if whole else d.selection)
@@ -80,6 +80,12 @@ class SpatialBatch:
             dirty=d.spatial_dirty
             if dirty is None or all(b.lo[i]<=dirty.lo[i]<=dirty.hi[i]<=b.hi[i] for i in range(3)):d.spatial_dirty=None
             d.analysis_display_origin='현재 분석'
+            if organize:
+                from PySide6.QtCore import QSignalBlocker
+                w.view.space_display.update(organized=True,mode='both',show_candidates=True,min_volume=0,use_filter='all')
+                with QSignalBlocker(w.space_tools.mode):w.space_tools.mode.setCurrentIndex(w.space_tools.mode.findData('both'))
+                self.panel.overlay.setChecked(True)
+                w.space_manager.overlays.setChecked(True)
             self.refresh();w.space_manager.refresh()
             if assets is not None:
                 w.network_view.equipment=assets
@@ -87,8 +93,15 @@ class SpatialBatch:
                 w.network_view.snapshot=w.network_view.signature()
                 w.workbench.rebuild_tree(True)
             w.refresh_history();self.sessions.describe();self.panel.status.setText(f'3D 완료 · 자동 등록 {len(added)}개 · '+str(dict(Counter(c['decision'] for c in r['candidates'])))+' · 블록 변경 없음')
+            if organize:
+                from collections import Counter as Count
+                from .space_organization import VISIBLE_CLASSES
+                c=Count(v.kind for v in w.view.space_classes.values())
+                visible_count=sum(c[k] for k in VISIBLE_CLASSES)
+                w.statusBar().showMessage(f'공간 분석 완료 · {len(r["candidates"]):,}개 발견 · 주요·보조·이동 {visible_count:,}개',7000)
+                w.workbench.save_display()
             event('space_batch_committed',trace_id=r.get('trace_id'),registered=len(added),partial=partial,scope=r['scope'])
-        if hasattr(w,'integrated_ui') and hasattr(w.integrated_ui,'tasks'):w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
+        if not organize and hasattr(w,'integrated_ui') and hasattr(w.integrated_ui,'tasks'):w.integrated_ui.tasks.show(w.integrated_ui.tasks.space_results)
         w.run_operation(work,done,ENGINE_NAMES.get(key,'기존 3D')+' · '+ENGINES.get(key,'0.9.3')+(' · 변경 구역' if partial else ' · 공간 분석'))
     def receive(self,r,doc):
         if self.owner.doc is not doc or doc.revision!=r['revision']:return

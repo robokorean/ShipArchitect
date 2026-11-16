@@ -119,8 +119,11 @@ def validate_settings(value,size):
             if type(cfg.get(k)) is int:p[k]=max(0,min(255,cfg[k]))
         if cfg.get('mode') in ('both','confirmed','candidates','changed','none','recovered','uncertain','fragments'):p['mode']=cfg['mode']
         if cfg.get('geometry') in ('mesh','bounds'):p['geometry']=cfg['geometry']
-        for k in ('external','only_selected','show_candidates'):
+        for k in ('external','only_selected','show_candidates','organized'):
             if type(cfg.get(k)) is bool:p[k]=cfg[k]
+        from .space_organization import LABELS
+        if cfg.get('use_filter') in ('all',*LABELS):p['use_filter']=cfg['use_filter']
+        if type(cfg.get('min_volume')) is int:p['min_volume']=min(1_000_000,max(0,cfg['min_volume']))
         p['visibility']={str(k):v for k,v in list(cfg.get('visibility',{}).items())[:4096] if isinstance(k,str) and type(v) is bool} if isinstance(cfg.get('visibility'),dict) else {}
         out['space_presentation']=p
     if isinstance(value.get('structure_layers'),list):

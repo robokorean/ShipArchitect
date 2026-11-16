@@ -59,6 +59,7 @@ class SpaceRenderer:
         self.revision = None
         self.halted = False
         self.last_failure = ""
+        self.display_states={}
 
     def reset(self):
         self.epoch += 1
@@ -76,6 +77,7 @@ class SpaceRenderer:
 
     def begin(self):
         self.performance.begin()
+        self.display_states={}
         self.config = validated(getattr(self.view, 'render_quality', {}))
         self.meshes.limit = int(self.config['cache_mib'] * 1024**2 * 2 / 3)
         self.meshes.trim()
@@ -97,7 +99,7 @@ class SpaceRenderer:
             self.partial.clear()
             self.worker.requestInterruption()
         self.priority = priority
-        self.used = [0, 0]
+        self.used = [0, 0, 0, 0]
         self.small_prepared = 0
         self.primary = getattr(bench, 'selection_key', None)
         self.last_failure = next(reversed(self.failed.values()), '')
@@ -111,8 +113,9 @@ class SpaceRenderer:
         # Keep the selected volume on a separate budget, independent of the background.
         self.budget = [max(700, int(self.config['faces'] * max(.22, ratio))),
                        self.config['selection_faces']]
+        self.budget.extend((min(3200,self.budget[0]),self.config['selection_faces']))
         if self.view.interaction_active:
-            self.budget=[0,min(160,self.budget[1])]
+            self.budget=[0,min(160,self.budget[1]),0,0]
         self.performance.current['lod_budget'] = self.budget[0]
 
     def finish(self):
@@ -254,7 +257,7 @@ class SpaceRenderer:
             except ValueError as exc:
                 self.reject(key, str(exc))
                 return None, True
-        if (not self.view.interaction_active and len(self.requested) < 128) or priority[0] == 0:
+        if (not self.view.interaction_active and (len(self.requested) < 128 or priority[0] < 4)) or priority[0] == 0:
             self.requested[key] = (priority, key, runs, outline, self.clip)
         return None, False
 
@@ -297,7 +300,7 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
     prior = renderer.primary
     summaries = []
     entries = []
-    lane = int(highlight)
+    preview=bool(spaces_override and spaces_override[0].get('_edit_preview'))
     before_projection = perf_counter()
     hull = getattr(view, 'workbench', None)
     direction = view.camera()
@@ -307,15 +310,17 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
                    view.exact_space_only,view.doc.active_space_id,id(getattr(view,'changed_candidate_ids',None)),
                    presentation.get('mode'),presentation.get('normal_alpha'),presentation.get('candidate_alpha'),
                    presentation.get('external'),presentation.get('only_selected'),presentation.get('show_candidates'),
+                   presentation.get('organized'),presentation.get('min_volume'),presentation.get('use_filter'),
                    tuple(presentation.get('visibility',{}).items()))
     else:
         group_key=None
     if group_key in renderer.groups:
         renderer.groups.move_to_end(group_key)
-        _,entries,lower,upper,hidden=renderer.groups[group_key]
+        _,entries,lower,upper,hidden,clipped=renderer.groups[group_key]
         stats['hidden']+=hidden
     else:
         hidden=0
+        clipped=[]
         for item in shapes:
             scene_key = item.get('_scene_key', ('candidate:' if candidates else 'space:') + item['id'])
             if spaces_override is None and scene_key in selected:
@@ -333,6 +338,7 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
                 continue
             lo, hi, point = renderer.bounds_for(item, runs, True)
             if point is None:
+                clipped.append(scene_key)
                 hidden += 1
                 continue
             entries.append((scene_key, item, runs, opacity, lo, hi, point))
@@ -340,27 +346,43 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
         lower=np.asarray([entry[4] for entry in entries])
         upper=np.asarray([entry[5] for entry in entries])+1
         if group_key is not None:
-            renderer.groups[group_key]=shapes,entries,lower,upper,hidden
+            renderer.groups[group_key]=shapes,entries,lower,upper,hidden,clipped
             while len(renderer.groups)>8:
                 renderer.groups.popitem(last=False)
+    renderer.display_states.update(dict.fromkeys(clipped,'clip'))
     if not entries:
         return
     low, high = screen_boxes(view, lower, upper)
     showing = in_view(view, low, high)
     stats['offscreen'] += len(entries) - int(showing.sum())
+    for i in np.flatnonzero(~showing):
+        renderer.display_states[entries[i][0]]='outside'
     extent = (high - low).max(axis=1)
     if view.interaction_active and not highlight and config(view).get('geometry')!='bounds':
         stats['projection_ms'] += (perf_counter() - before_projection) * 1000
-        draw_summaries(view,painter,[entries[i][-1] for i in np.flatnonzero(showing)],False,stats)
+        draw_summaries(view,painter,[(entries[i][0],entries[i][-1]) for i in np.flatnonzero(showing)],False,stats)
         return
     # Reserve the first slot on a warm or cold frame for the active selection.
-    order = sorted(np.flatnonzero(showing), key=lambda i: (entries[i][0] != prior, -extent[i], entries[i][0]))
+    organized=config(view).get('organized',False)
+    kinds=getattr(view,'space_classes',{}) if organized else {}
+    ranks={'major':3,'support':4,'movement':4}
+    def rank(key):
+        if key==prior and highlight:return 0
+        if highlight:return 1
+        if preview:return 1
+        if key.startswith('space:'):return 2
+        return ranks.get(kinds[key].kind,5) if key in kinds else 5
+    order = sorted(np.flatnonzero(showing), key=lambda i: (rank(entries[i][0]), -extent[i], entries[i][0]))
+    majors=sum(rank(entries[i][0])==3 for i in order)
     stats['projection_ms'] += (perf_counter() - before_projection) * 1000
     for i in order:
         key, item, runs, opacity, lo, hi, point = entries[i]
+        priority=rank(key)
+        lane=3 if preview else 1 if highlight else 2 if priority==3 else 0
         if spaces_override is None and config(view).get('geometry') == 'bounds':
             view.box(painter, Bounds(lo, hi))
             stats['summary'] += 1
+            renderer.display_states[key]='summary'
             continue
         active = highlight and key == prior
         cutoff = (22 if view.interaction_active else 8) * (1.8 if cfg['quality'] == 'low' else 1)
@@ -371,19 +393,27 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
         remaining = renderer.budget[lane] - renderer.used[lane]
         threshold = max(40, int(2600 * (extent[i] / max(1, view.width())) ** 1.3))
         allowed = remaining if active or not cfg['lod'] else min(remaining, threshold)
+        if preview:
+            detail=True
+            allowed=remaining
+        if priority==3:
+            majors-=1
+            # Leave shape capacity for other major rooms in the same view.
+            allowed=max(0,remaining-min(majors*96,remaining//2))
+            detail=True
         if highlight:
             stats['selection_expected'] += 1
         if allowed <= 0 or not highlight and cfg['lod'] and not detail:
-            summaries.append(point)
+            summaries.append((key,point))
             continue
-        packet, failure = renderer.packet(key, runs, highlight,
-                                         (0 if active else 1 if highlight else 2 if not candidates and cfg['priority']=='confirmed' else 3, -extent[i]))
+        packet, failure = renderer.packet(key, runs, highlight,(priority,-extent[i]))
         partial = False
         if packet is None:
             stats['failed' if failure else 'pending'] += 1
+            renderer.display_states[key]='failed' if failure else 'pending'
             inflight = renderer.partial.get((key,id(runs),renderer.clip,highlight))
             if inflight is None:
-                summaries.append(point)
+                summaries.append((key,point))
                 continue
             packet, partial = inflight[0], True
         _, tiles, edges = packet
@@ -392,17 +422,19 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
         stats['visible_tiles'] += count
         if not len(q):
             stats['offscreen'] += 1
+            renderer.display_states[key]='outside'
             continue
         depth = (q @ direction).mean(axis=1)
         selected_faces = _choose_faces(screen, depth, allowed)
         stats['projection_ms'] += (perf_counter() - started) * 1000
         if not len(selected_faces):
-            summaries.append(point)
+            summaries.append((key,point))
             continue
         renderer.used[lane] += len(selected_faces)
         stats['faces'] += len(selected_faces)
         exact = len(selected_faces) == len(q) and not partial
         stats['exact' if exact else 'simplified'] += 1
+        renderer.display_states[key]='exact' if exact else 'simplified'
         started = perf_counter()
         tint = QColor(item.get('color', '#ffce62') if highlight else '#54bfc9' if candidates else color(item))
         fill = QColor(tint)
@@ -410,16 +442,19 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
         painter.setBrush(fill)
         painter.setPen(Qt.PenStyle.NoPen)
         xray = not highlight or hull is None or hull.selection_xray.isChecked()
+        drawn=0
         for index in selected_faces:
             if not xray and view.occluded_point(q[index].mean(axis=0)):
                 continue
             poly = QPolygonF([QPointF(*pt) for pt in screen[index]])
             painter.drawPolygon(poly)
+            drawn+=1
             if selectable:
                 if key.startswith('space:'):
                     view.space_hits.append((item['id'], poly))
                 else:
                     view.scene_hits.append((key, poly, float(depth[index])))
+        if not drawn and not xray:renderer.display_states[key]='covered'
         if highlight and edges is not None:
             pixels = view.project(edges)
             inside = in_view(view, pixels.min(axis=1), pixels.max(axis=1))
@@ -442,10 +477,13 @@ def draw_summaries(view, painter, points, highlight, stats):
     if not points:
         return
     started=perf_counter()
-    xy=view.project(points)
+    keys,positions=zip(*points)
+    xy=view.project(positions)
     on_screen=in_view(view,xy,xy)
     stats['summary'] += int(on_screen.sum())
     stats['not_drawn'] += len(xy)-int(on_screen.sum())
+    for key,show in zip(keys,on_screen):
+        view.space_renderer.display_states.setdefault(key,'summary' if show else 'off_marker')
     painter.setPen(QPen(QColor('#ffce62' if highlight else '#6aafba'), 3 if highlight else 2))
     painter.drawPoints(QPolygonF([QPointF(*pt) for pt in xy[on_screen]]))
     stats['draw_ms'] += (perf_counter()-started)*1000

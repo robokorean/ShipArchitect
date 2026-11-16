@@ -50,6 +50,8 @@ class Workspace93:
         scroll.setWidget(w.structure_review)
         self.structure_page=ui.properties.addTab(scroll,'구조 검증')
         w.structure_review.attach()
+        from .space_review_ui import SpaceReview
+        self.b.space_review=SpaceReview(self.b)
     def show(self,widget):
         self.bottom.setCurrentWidget(widget);self.result_dock.show();self.result_dock.raise_();
         if not self.result_dock.isFloating():self.w.resizeDocks([self.result_dock],[230],Qt.Orientation.Vertical)
@@ -58,9 +60,9 @@ class Workspace93:
         if on and not self.result_dock.isFloating():self.w.resizeDocks([self.result_dock],[230],Qt.Orientation.Vertical)
     def compact_space(self):
         p=self.w.space_view
-        primary={'완전 신규 분석','공간 유지 재분석','선택 후보 등록','전체 3D 분석·자동 등록','저장 공간 복원'}
+        primary={'선택 후보 등록'}
         menu_button=QToolButton()
-        menu_button.setText('분석 관리 · 고급')
+        menu_button.setText('고급 분석·복원')
         menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu=QMenu(menu_button)
         archive=menu.addMenu('저장 분석')
@@ -88,7 +90,15 @@ class Workspace93:
                 grid.addWidget(widget,j//2,j%2)
             row.addLayout(grid)
         menu_button.setMenu(menu)
-        layout.insertWidget(0,menu_button)
+        menu.addAction('공간 표시 필터',lambda:self.b.space_review.filter_dialog())
+        actions=QHBoxLayout()
+        analyze=QPushButton('공간 분석')
+        analyze.setObjectName('one_click_space_analysis')
+        analyze.clicked.connect(lambda:self.b.space_review.analyze())
+        actions.addWidget(analyze)
+        actions.addWidget(menu_button)
+        layout.insertLayout(0,actions)
+        self.quick_analysis_button=analyze
         p.status.setText('새 결과는 후보로 표시됩니다. 별도 저장과 비교는 분석 관리 메뉴를 사용하세요.')
     def compact_network(self):
         w=self.w;n=w.network_view;old=n.layout()

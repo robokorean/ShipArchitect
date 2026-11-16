@@ -40,13 +40,19 @@ def test_one_explorer_one_drawing_and_properties_no_duplicate_tabs(window):
  w.tabs.setCurrentWidget(w.network_view);assert ui.analysis_dock.isVisible() and w.tabs.indexOf(w.network_view)<0
 
 
-def test_ribbon_create_edit_merge_split_and_undo_preserve_blocks(window):
+def test_ribbon_create_edit_merge_split_and_undo_preserve_blocks(window,monkeypatch):
+ from PySide6.QtWidgets import QMessageBox
+ previews=[]
+ def approved(*args):
+  previews.append(len(window.view.validation_spaces))
+  return QMessageBox.StandardButton.Yes
+ monkeypatch.setattr(QMessageBox,'question',approved)
  w=window;d=w.doc;b=w.workbench;ui=w.integrated_ui;before=d.schematic.blocks.copy();meta=d.schematic.metadata_digest()
  w.set_selection(Bounds((1,1,1),(3,3,3)));press(w,'공간','공간 추가');first=d.active_space_id
  w.set_selection(Bounds((4,1,1),(6,3,3)));press(w,'공간','공간 추가');second=d.active_space_id
  b.property_name.setText('격납고 A');b.property_purpose.setText('격납고');b.apply_properties();assert d.active_space()['name']=='격납고 A'
  b.rebuild_tree(True);b.tree.clearSelection();b.nodes['space:'+first].setSelected(True);b.nodes['space:'+second].setSelected(True);press(w,'공간','합치기');assert len(d.spaces)==1
- w.set_selection(Bounds((1,1,1),(3,3,3)));press(w,'공간','분리');assert len(d.spaces)==2
+ w.set_selection(Bounds((1,1,1),(3,3,3)));press(w,'공간','분리');assert len(d.spaces)==2 and previews==[1,2]
  w.undo();assert len(d.spaces)==1;w.redo();assert len(d.spaces)==2
  assert np.array_equal(before,d.schematic.blocks) and d.schematic.metadata_digest()==meta
 

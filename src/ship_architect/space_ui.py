@@ -117,6 +117,7 @@ class SpacePlan(LayerView):
                 if bench is None or not bench.pick_scene(bench.keys_at(end),bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)):
                     m.select_at(end)
             else:m.owner.set_selection(Bounds.between(start,end))
+        elif m.edit_mode.currentData()=='split':m.owner.workbench.space_review.split(Bounds.between(start,end))
         else:m.edit_bounds(Bounds.between(start,end),m.edit_mode.currentData())
         self.update()
 
@@ -141,7 +142,7 @@ class SpaceManager(QWidget):
         row=QHBoxLayout();self.edit_mode=QComboBox()
         for name,key in [('공간 클릭 선택','select'),('경계에 사각 셀 추가','add'),('경계에서 사각 셀 제거','remove'),('사각 부분을 새 공간으로 분리','split')]:self.edit_mode.addItem(name,key)
         row.addWidget(self.edit_mode);self.all_height=QCheckBox('2D 드래그를 공간 전체 높이에 적용');row.addWidget(self.all_height);lay.addLayout(row)
-        buttons([('현재 3D 선택을 경계에 추가',lambda:self.edit_bounds(owner.doc.selection,'add')),('현재 3D 선택을 경계에서 제거',lambda:self.edit_bounds(owner.doc.selection,'remove')),('현재 3D 선택으로 분리',lambda:self.edit_bounds(owner.doc.selection,'split')),('공간 2D 열기',self.open_plan),('선택 공간으로 카메라 이동',self.focus)])
+        buttons([('현재 3D 선택을 경계에 추가',lambda:self.edit_bounds(owner.doc.selection,'add')),('현재 3D 선택을 경계에서 제거',lambda:self.edit_bounds(owner.doc.selection,'remove')),('현재 3D 선택으로 분리',lambda:owner.workbench.space_review.split()),('공간 2D 열기',self.open_plan),('선택 공간으로 카메라 이동',self.focus)])
         row=QHBoxLayout();self.overlays=QCheckBox('공간 오버레이');self.overlays.setChecked(True);self.blocks=QCheckBox('실제 블록');self.blocks.setChecked(True);self.only=QCheckBox('선택 공간만');self.ghost=QCheckBox('다른 층 반투명')
         for c in (self.overlays,self.blocks,self.only,self.ghost):row.addWidget(c);c.toggled.connect(self.display)
         lay.addLayout(row)

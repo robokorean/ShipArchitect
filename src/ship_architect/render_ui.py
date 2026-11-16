@@ -52,6 +52,9 @@ class RenderControls:
             progress += f' · 청크 {done}/{total}' if total else f" · 정밀화 {stats['pending']}"
         self.label.setText(f"{PROFILES[cfg['quality']][0]} · 정밀 {stats['exact']} / 간략 {stats['simplified']} / 요약 {stats['summary']}" + progress)
         self.label.setToolTip(json.dumps(self.snapshot(), ensure_ascii=False, indent=2))
+        review=getattr(self.b,'space_review',None)
+        if review is not None and review.note.isVisible():
+            review.note.setText(review.state(self.b.selection_key))
         ui=getattr(self.owner,'integrated_ui',None)
         if ui is not None and hasattr(ui,'ui_summary') and ui.ui_summary.isVisible():
             ui.ui_summary.setPlainText(json.dumps(ui.ui_state(),ensure_ascii=False,indent=2))
