@@ -51,3 +51,41 @@ def test_legacy_result_without_precision_fields():
     result={'candidates':[{'id':'other'}],'connections':[{'spaces':['owner','other']}]}
     prune_candidate_relations(result,{'owner'})
     assert result=={'candidates':[{'id':'other'}],'connections':[]}
+
+
+def test_delete_and_exclusion_share_cleanup_and_undo_redo():
+    from ship_architect.analysis_state import apply_rules, commit
+    from ship_architect.exterior_recognition import recognize_exterior
+    from ship_architect.scene_registry import delete_items
+    from test_v0934_sessions import room_document
+
+    doc = room_document()
+    result = recognize_exterior(doc, doc.selection, engine='precision')
+    owner, fragment = result['candidates'][:2]
+    owner_id, fragment_id = owner['id'], fragment['id']
+    fragment['adjacent_spaces'] = [{'id': owner_id, 'unit_faces': 8}]
+    fragment['fragment'] = {'kind': 'attached_fragment', 'adjacent_faces': 8,
+                            'suggested_owner_id': owner_id, 'shared_faces': 8}
+    result['structural_generation']['fragment_counts'] = {'attached_fragment': 1}
+    blocks = doc.schematic.blocks.copy()
+    digest = doc.schematic.metadata_digest()
+    commit(doc, dict(doc.analysis_state, last_result=result))
+    delete_items(doc, set(), {owner_id}, set(), exclude=True)
+
+    def assert_clean(current):
+        assert owner_id not in {c['id'] for c in current['candidates']}
+        remaining = next(c for c in current['candidates'] if c['id'] == fragment_id)
+        assert remaining['volume_runs'] == fragment['volume_runs']
+        assert remaining['fragment']['kind'] == 'residual_air'
+        assert remaining['fragment']['suggested_owner_id'] is None
+        assert remaining['adjacent_spaces'] == []
+
+    assert_clean(doc.analysis_state['last_result'])
+    assert_clean(apply_rules(result, doc.analysis_state, doc.schematic.size))
+    doc.undo()
+    restored = next(c for c in doc.analysis_state['last_result']['candidates'] if c['id'] == fragment_id)
+    assert restored['fragment']['suggested_owner_id'] == owner_id
+    doc.redo()
+    assert_clean(doc.analysis_state['last_result'])
+    assert (doc.schematic.blocks == blocks).all()
+    assert doc.schematic.metadata_digest() == digest
