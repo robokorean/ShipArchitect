@@ -17,7 +17,7 @@ import traceback
 import uuid
 import zipfile
 
-APP_VERSION = '0.9.3.12'
+APP_VERSION = '0.9.3.13'
 MAX_LOG_BYTES = 5 * 1024 * 1024
 ROTATIONS = 3
 _lock = threading.RLock()
@@ -160,6 +160,7 @@ def report(destination, *, document=None, ui_state=None):
             if document is not None:
                 state=getattr(document,'analysis_state',{})
                 z.writestr('analysis_summary.json',json.dumps({'block_epoch':getattr(document,'block_epoch',0),'equipment_rules':len(state.get('equipment_rules',{})),'space_rules':len(state.get('space_rules',[])),'decisions':len(state.get('decisions',{})),'last_result':{k:v for k,v in state.get('last_result',{}).items() if k not in ('candidates','shell_face_runs','structure_review')}},ensure_ascii=False))
+                z.writestr('facilities.json',json.dumps(_clean(state.get('facilities',{})),ensure_ascii=False,indent=2))
                 review=state.get('last_result',{}).get('structure_review')
                 if review is not None:
                     with z.open('structure_review.jsonl','w') as stream:

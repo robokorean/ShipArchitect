@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         hl=QVBoxLayout(hbox)
         self.history_view=QPlainTextEdit();self.history_view.setReadOnly(True);self.history_view.setMaximumHeight(140)
         hl.addWidget(self.history_view);side.addWidget(hbox)
-        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.12: 외형·갑판·개구부 · 2D/3D 구조 검증\n장치 연결·동작 검증은 아직 지원하지 않습니다.')
+        note = QLabel('금색: 선택 구역 / 보라색: 모드 블록\nv0.9.3.13: 시설 그룹 · 설비 구분 · 정적 이동 경로\n설비 인접 후보와 실제 작동·게임 통행 검증을 구분합니다.')
         note.setWordWrap(True)
         note.setStyleSheet('color: #9cacc0;')
         side.addWidget(note)

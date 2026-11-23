@@ -44,7 +44,7 @@ def movement_palette(sc):
             if name.endswith(('_door','_trapdoor')):potential[i]=3
     return passage,potential,support,stairs,unknown,dict(reasons)
 
-@njit(cache=True)
+@njit(cache=True,nogil=True)
 def can_step(y,z,x,Y,Z,X,bits,stairs):
     H,L,W=bits.shape
     if not(0<=Y<H-1 and 0<=Z<L and 0<=X<W):return False
@@ -61,7 +61,7 @@ def can_step(y,z,x,Y,Z,X,bits,stairs):
     if not(stairs[Y,Z,X]==direction or stairs[y,z,x]==direction):return False
     return Y+2<H and (bits[Y+2,Z,X]&axis)!=0
 
-@njit(cache=True)
+@njit(cache=True,nogil=True)
 def label_walk(walk,bits,stairs):
     H,L,W=walk.shape;labels=np.zeros(walk.shape,np.int32);queue=np.empty(walk.size,np.int32);label=0
     for y in range(H-1):
@@ -78,7 +78,7 @@ def label_walk(walk,bits,stairs):
                                 labels[Y,Z,X]=label;queue[tail]=(Y*L+Z)*W+X;tail+=1
     return labels,label
 
-@njit(cache=True)
+@njit(cache=True,nogil=True)
 def trace_route(walk,bits,stairs,start,goal,budget):
     H,L,W=walk.shape;parent=np.full(walk.size,-2,np.int32);queue=np.empty(min(walk.size,budget),np.int32)
     queue[0]=start;parent[start]=-1;head=0;tail=1;found=-1
@@ -121,9 +121,25 @@ def overlap_cells(a,b):
         for lo,hi in rows.get((y,z),[]):count+=max(0,min(X,hi)-max(x,lo)+1)
     return count
 
+def analysis_spaces(doc):
+    """Route inspection can use physical candidates without confirming them as rooms."""
+    spaces = list(doc.spaces)
+    registered = {s['id'] for s in spaces}
+    for rank,candidate in enumerate(doc.space_candidates,1):
+        if candidate.get('decision') not in ('auto','review') or not candidate.get('volume_runs'):
+            continue
+        if candidate.get('registered_space_id') in registered or candidate.get('existing_space_id') in registered:
+            continue
+        if candidate.get('space_class') in ('exterior_air','exterior_or_merged','sky_exposed','exposed_deck','unresolved_exterior_merge'):
+            continue
+        spaces.append(dict(id='candidate:'+candidate['id'], name=f'공간 후보 {rank:02d}',
+                           runs=candidate['volume_runs'], candidate=True))
+    return spaces
+
+
 class Navigation:
-    def __init__(self,doc,bounds=None,progress=None,cancel=None):
-        self.revision=doc.revision;self.spaces=doc.spaces;self.size=doc.schematic.size
+    def __init__(self,doc,bounds=None,progress=None,cancel=None,*,spaces=None):
+        self.revision=doc.revision;self.spaces=doc.spaces if spaces is None else spaces;self.size=doc.schematic.size
         w,h,l=self.size;bounds=bounds or Bounds((0,0,0),(w-1,h-1,l-1));bounds.validate(self.size)
         if bounds.volume>MAX_VOLUME:raise ValueError('통행 분석은 8백만 셀 이하로 범위를 나누세요. 현재 선택 범위 분석을 사용하세요.')
         self.bounds=bounds;self.origin=bounds.lo;sc=doc.schematic;x,y,z=bounds.lo;X,Y,Z=bounds.hi
@@ -169,6 +185,7 @@ class Navigation:
             possible,_=space_labels(s,self.possible_labels,self.origin);self.possible[s['id']]=set(possible)
             low,high=bbox(s);self.coverage[s['id']]=all(a<=c and d<=b for a,b,c,d in zip(bounds.lo,bounds.hi,low,high))
         self.observations.update(walkable_cells=int(self.walk.sum()),possible_cells=int(self.potential_walk.sum()),components=self.components,unknown_collision_blocks=int(unknown[a].sum()))
+        self.observations.update(collision_model='static_known_blocks_two_cell_walk_v1',game_collision_verified=False,device_operation_verified=False)
         if progress:progress(100,'연결 분석 완료 · 실제 장치 작동은 미판정')
         checkpoint(cancel)
         if doc.revision!=self.revision:raise ValueError('분석 중 프로젝트가 변경되었습니다.')
@@ -195,4 +212,4 @@ class Navigation:
         H,L,W=self.walk.shape;x,y,z=self.origin
         path=[[int(i%W+x),int(i//(W*L)+y),int(i//W%L+z)] for i in indices]
         if not path:return dict(status='uncertain',reason='라벨과 경로 검색 불일치. 다시 분석하세요.',path=[])
-        return dict(**pair,path=path,steps=len(path)-1)
+        return dict(**pair,path=path,steps=len(path)-1,game_collision_verified=False,device_operation_verified=False,verification='정적 2칸 통행 모델 · 실제 게임 충돌 및 장치 동작 미검증')

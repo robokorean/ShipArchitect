@@ -119,6 +119,8 @@ def validate_memberships(value):
 
 
 def prune_memberships(state, removed=(), replacement=None):
+    from .facilities import prune
+    prune(state, removed, replacement)
     mapping=state.get('space_memberships')
     if not mapping:
         return

@@ -33,7 +33,7 @@ class Workbench:
         container=QWidget();lay=QVBoxLayout(container);row=QHBoxLayout();self.search=QLineEdit();self.search.setPlaceholderText('장면 검색: 공간·설비·연결');self.search.textChanged.connect(self.filter);row.addWidget(self.search);self.sort=QComboBox();self.sort.addItems(['층 / 이름','용도 / 이름','큰 공간 우선']);self.sort.currentIndexChanged.connect(lambda _:self.rebuild_tree(True));row.addWidget(self.sort);lay.addLayout(row);lay.addWidget(self.tree)
         row=QHBoxLayout()
         self.kind_filter=QComboBox()
-        for label,key in [('전체 대상','all'),('확정 공간','spaces'),('미확정 후보','candidates'),
+        for label,key in [('전체 대상','all'),('확정 공간','spaces'),('미확정 후보','candidates'),('시설 그룹','facilities'),
                           ('설비','equipment'),('이동·연결','connections'),('원본과 층','source'),('즐겨찾기','favorites')]:
             self.kind_filter.addItem(label,key)
         self.kind_filter.currentIndexChanged.connect(self.filter)
@@ -147,8 +147,13 @@ class Workbench:
             elif network.nav is not None and network.snapshot==network.signature():self.pending_route=None;self.route_selected(ids)
             elif time.monotonic()-started>3:self.pending_route=None;network.status.setText('연결 분석을 완료하지 못했습니다. 범위/오류를 확인한 뒤 다시 시도하세요.')
 
+    def navigation_selection(self):
+        return [key[6:] if key.startswith('space:') else key
+                for key in sorted(self.keys_for_scope('selected'))
+                if key.startswith(('space:','candidate:'))]
+
     def route_selected(self,ids=None):
-        if not isinstance(ids,(list,tuple)):ids=[item.data(0,ROLE).split(':',1)[1] for item in self.tree.selectedItems() if str(item.data(0,ROLE)).startswith('space:')]
+        if not isinstance(ids,(list,tuple)):ids=self.navigation_selection()
         if len(ids)!=2:self.owner.network_view.status.setText('장면 트리에서 Ctrl로 공간 2개를 선택하세요.');self.open_tab(self.owner.network_view);return
         network=self.owner.network_view
         network.source.setCurrentIndex(network.source.findData(ids[0]));network.target.setCurrentIndex(network.target.findData(ids[1]))
@@ -329,7 +334,13 @@ class Workbench:
         view=self.owner.view
         self.previous_camera=(view.yaw,view.pitch,view.zoom,view.pan.copy(),view.focus_bounds)
         record=self.records.get(self.selection_key,{})
-        if 'volume_runs' in record:
+        if (self.selection_key or '').startswith('facility:'):
+            members=[self.records[k] for k in self.keys_for_scope('group') if k.startswith(('space:','candidate:'))]
+            if members:
+                boxes=[(r['lo'],r['hi']) if 'volume_runs' in r else bbox(r) for r in members]
+                low=np.min([pair[0] for pair in boxes],axis=0);high=np.max([pair[1] for pair in boxes],axis=0)
+                view.focus_bounds=Bounds(tuple(map(int,low)),tuple(map(int,high)));view.zoom=1.;view.pan[:]=0;view.schedule_render()
+        elif 'volume_runs' in record:
             self.owner.view.focus_bounds=Bounds(tuple(record['lo']),tuple(record['hi']));self.owner.view.zoom=1.;self.owner.view.pan[:]=0;self.owner.view.schedule_render()
         elif record.get('position') is not None:
             xyz=record['position'];self.owner.view.focus_bounds=Bounds(tuple(max(0,v-2) for v in xyz),tuple(min(dim-1,v+2) for dim,v in zip(self.owner.doc.schematic.size,xyz)));self.owner.view.zoom=1.;self.owner.view.pan[:]=0;self.owner.view.schedule_render()
@@ -456,6 +467,19 @@ class Workbench:
                 group.setText(0,f'부속 조각 {group.childCount()}개')
             for group in candidate_groups.values():
                 group.setHidden(group.childCount()==0)
+        facilities = self.node(root,'시설 그룹','facilities')
+        for fid, facility in d.analysis_state.get('facilities',{}).items():
+            refs = [ref for ref in facility['members'] if ref in self.records]
+            node = self.node(facilities,facility['name'],'facility:'+fid,
+                             bool(refs) and all(self.record_visible(ref) for ref in refs),
+                             f"{len(refs)}개 · {facility['purpose']}")
+            for ref in facility['members']:
+                source_node = self.nodes.get(ref)
+                title = source_node.text(0) if source_node is not None else ref
+                child = QTreeWidgetItem(node,[title,'참조 유지' if ref in self.records else '재검토 필요'])
+                child.setData(0,ROLE,ref if ref in self.records else '')
+                child.setToolTip(0,ref)
+        facilities.setHidden(not facilities.childCount())
         for y in self.owner.space_manager.levels:self.nodes['floor:'+str(y)]=self.node(floors,'Y='+str(y),'floor:'+str(y),d.floor_visibility.get(str(y),True))
         path=getattr(self.owner.view,'route_path',[])
         if managed is None and path:
@@ -726,6 +750,11 @@ class Workbench:
         elif key.startswith(('space:','spacefloor:','spacepurpose:')):
             ids={s['id'] for s in d.spaces if key=='space:'+s['id'] or key=='spacefloor:'+str(bbox(s)[0][1]) or key=='spacepurpose:'+s['purpose']}
             self.owner.space_tools.visibility(ids,value)
+        elif key=='facilities' or key.startswith('facility:'):
+            groups=d.analysis_state.get('facilities',{})
+            group_values=groups.values() if key=='facilities' else [groups.get(key.split(':',1)[1],{})]
+            refs={ref.split(':',1)[1] for group in group_values for ref in group.get('members',[]) if ref in self.records}
+            self.owner.space_tools.visibility(refs,value)
         elif key=='candidates':
             self.owner.view.space_display['show_candidates']=value
             if value:self.owner.space_view.overlay.setChecked(True)
@@ -795,7 +824,8 @@ class Workbench:
                 self.owner.doc.active_space_id=None
                 self.owner.space_manager.load_properties()
             self.inspector.setPlainText('그룹 또는 선택 항목 없음')
-            self.summary_properties.setPlainText('그룹 또는 선택 항목 없음')
+            self.summary_properties.setPlainText(self.facilities.summary(key.split(':',1)[1])
+                if key and key.startswith('facility:') and hasattr(self,'facilities') else '그룹 또는 선택 항목 없음')
         elif key.startswith('space:'):
             self.busy=True
             try:
@@ -827,7 +857,7 @@ class Workbench:
             self.owner.statusBar().showMessage('숨겨진 분석 항목입니다. 탐색기의 표시 체크박스로 다시 표시할 수 있습니다.')
         self.timer.start()
         if self.mode.currentText()=='연결·경로':
-            ids=[i.data(0,ROLE).split(':',1)[1] for i in items if str(i.data(0,ROLE)).startswith('space:')]
+            ids=self.navigation_selection()
             if len(ids)==2:self.route_selected(ids)
     def merge_selected(self):
         ids={item.data(0,ROLE).split(':',1)[1] for item in self.tree.selectedItems() if str(item.data(0,ROLE)).startswith('space:')};manager=self.owner.space_manager
@@ -1034,7 +1064,7 @@ class Workbench:
         from .space_geometry import draw_volumes
         view=self.owner.view
         shapes=[]
-        for key,record in self.selection_records():
+        for rank,(key,record) in enumerate(self.selection_records()):
             if key.startswith(('space:','candidate:')):
                 runs=record.get('volume_runs',record.get('runs',[]))
             elif record.get('position') is not None:
@@ -1043,7 +1073,7 @@ class Workbench:
             else:
                 continue
             shapes.append({'id':key.split(':',1)[1],'_scene_key':key,'runs':runs,
-                           'color':self.highlight_color,'opacity':105})
+                           'color':self.highlight_color if rank==0 else ('#71c9f1','#cc93e8','#90d5a0')[(rank-1)%3],'opacity':105})
         if shapes:
             draw_volumes(view,painter,spaces_override=shapes,highlight=True)
         if view.interaction_active:return
@@ -1081,8 +1111,7 @@ class Workbench:
                 runs=[[y,z,x,x]]
             if runs:
                 from .display import visible_space_runs
-                runs=visible_space_runs({'runs':runs},self.owner.doc,self.owner.view)
-                mask=sampled_space_mask({'runs':runs},f,position,1,(size[v],size[u]))
+                mask=self.axis_plan.masks.get(runs,self.owner.view,f,position,1,(size[v],size[u]))
                 fill=QColor(color);fill.setAlpha(118)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(fill)

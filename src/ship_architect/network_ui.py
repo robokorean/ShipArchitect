@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtCore import Qt,QPointF
 from PySide6.QtGui import QColor,QPen
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QComboBox,QCheckBox,QLabel,QListWidget,QPlainTextEdit,QSplitter,QLineEdit,QTableWidget,QTableWidgetItem,QSpinBox
-from .navigation import Navigation
+from .navigation import Navigation, analysis_spaces
 from .equipment import inventory,search_records
 from .diagnostics import event as diagnostic_event
 from .model import Bounds
@@ -49,7 +49,7 @@ class NetworkView(QWidget):
         d=self.owner.doc
         if d is None:return
         ids=(self.source.currentData(),self.target.currentData());self.source.blockSignals(True);self.target.blockSignals(True);self.source.clear();self.target.clear()
-        for s in sorted(d.spaces,key=lambda s:(bbox(s)[0][1],s['name'])):
+        for s in sorted(analysis_spaces(d),key=lambda s:(bbox(s)[0][1],s['name'])):
             lo,hi=bbox(s);label=f"{s['name']} · Y={lo[1]}~{hi[1]}";self.source.addItem(label,s['id']);self.target.addItem(label,s['id'])
         for combo,sid in zip((self.source,self.target),ids):
             at=combo.findData(sid)
@@ -63,7 +63,7 @@ class NetworkView(QWidget):
         from .space_model import token
         d=self.owner.doc
         block_events=tuple((h['action'],h.get('time')) for h in d.history if h.get('blocks',0)>0 and h['action'] in ('approve','undo','redo'))
-        return (id(d),block_events,tuple(token(s) for s in d.spaces),json.dumps(d.analysis_state.get('equipment_rules',{}),sort_keys=True))
+        return (id(d),tuple((c['id'],c.get('fingerprint'),c.get('decision'),c.get('registered_space_id')) for c in d.space_candidates),block_events,tuple(token(s) for s in d.spaces),json.dumps(d.analysis_state.get('equipment_rules',{}),sort_keys=True))
     def reset(self):
         self.nav=None;self.equipment=None;self.snapshot=None;self.analysis_doc=None;self.connections.clear();self.table.setRowCount(0);self.details.clear();self.clear_route()
     def invalidate(self):
@@ -73,10 +73,11 @@ class NetworkView(QWidget):
             self.pages.setCurrentIndex(0);self.owner.integrated_ui.tasks.show(self.owner.integrated_ui.tasks.connection_results)
         d=self.owner.doc
         if self.owner.operation is not None:return
-        if not d.spaces:self.status.setText('공간 관리에서 공간을 먼저 만들거나 가져오세요.');return
+        physical=analysis_spaces(d)
+        if not physical:self.status.setText('공간 분석을 먼저 실행하거나 공간을 만드세요.');return
         signature=self.signature();bounds=d.selection if self.local.isChecked() else None
         def work(progress,cancel):
-            nav=Navigation(d,bounds,progress,cancel);equipment=inventory(d,progress,cancel);return nav,equipment
+            nav=Navigation(d,bounds,progress,cancel,spaces=physical);equipment=inventory(d,progress,cancel);return nav,equipment
         def done(result):
             if self.owner.doc is not d or signature!=self.signature():self.status.setText('분석 중 문서가 변경되어 폐기했습니다.');return
             self.nav,self.equipment=result;self.snapshot=signature;self.analysis_doc=d;self.list_connections();self.show_equipment();self.status.setText(f"통행 셀 {self.nav.observations['walkable_cells']:,} · 성분 {self.nav.components:,} · 겹침은 연결과 별도 표시 · 작동 미확인 설비 {self.equipment['total']:,}")
@@ -93,7 +94,7 @@ class NetworkView(QWidget):
         if self.snapshot!=self.signature():self.invalidate();return
         left=self.source.currentData()
         if left not in self.nav.members:return
-        for s in self.owner.doc.spaces:
+        for s in self.nav.spaces:
             if s['id']==left:continue
             result=self.pair(left,s['id']);self.rows.append((s,result));self.connections.addItem(f"{s['name']} · {STATUS[result['status']]} · {result['reason']}")
     def describe(self,row):
@@ -129,7 +130,9 @@ class NetworkView(QWidget):
                 if key not in state.get('scene_excluded',[]):
                     self.owner.view.route_key=key
                     scene[key]={'positions':[list(p) for p in compressed],'label':'이동 경로',
-                                'spaces':[left,right],'status':'모델상 통행 가능','manual':True}
+                                'spaces':[sid for sid in (left,right) if not sid.startswith('candidate:')],
+                                'candidate_ids':[sid[10:] for sid in (left,right) if sid.startswith('candidate:')],
+                                'status':'정적 모델 경로 · 게임 통행 미검증','manual':True}
                     commit(d,state,action='scene_route_register')
                     self.owner.refresh_history()
                     self.owner.workbench.rebuild_tree(True)
@@ -142,7 +145,9 @@ class NetworkView(QWidget):
         if hasattr(self.owner,'space_manager'):self.owner.space_manager.plan.update()
     def focus(self):
         sid=self.source.currentData()
-        if sid:self.owner.space_manager.select_id(sid);self.owner.view.focus_selection();self.owner.tabs.setCurrentWidget(self.owner.split_tab if self.owner.split_mode.isChecked() else self.owner.view)
+        if sid:
+            key=sid if sid.startswith('candidate:') else 'space:'+sid
+            if self.owner.workbench.select_key(key):self.owner.workbench.focus()
     def scan_equipment(self,*_,persist=True):
         if hasattr(self,'pages'):
             self.pages.setCurrentIndex(2);self.owner.integrated_ui.tasks.show(self.table)
@@ -157,7 +162,7 @@ class NetworkView(QWidget):
                 state=copy.deepcopy(d.analysis_state)
                 state['scene_records']=discover(d,state.get('last_result',{}),result,None,state)
                 if state!=d.analysis_state:commit(d,state,action='scene_equipment_register');self.owner.refresh_history()
-            if self.owner.doc is d:self.equipment=result;self.analysis_doc=d;self.snapshot=signature;self.show_equipment();getattr(self,'equipment_details',self.details).setPlainText(json.dumps({k:v for k,v in result.items() if k not in ('records','position_runs')},ensure_ascii=False,indent=2));
+            if self.owner.doc is d:self.equipment=result;self.analysis_doc=d;self.snapshot=signature;self.show_equipment();getattr(self,'equipment_details',self.details).setPlainText(json.dumps({k:v for k,v in result.items() if k not in ('records','position_runs','assembly_candidates')},ensure_ascii=False,indent=2));
             if hasattr(self.owner,'workbench'):self.owner.workbench.rebuild_tree(True)
         self.owner.run_operation(lambda p,c:inventory(d,p,c),done,'모드 설비 분석')
     def equipment_filter_changed(self,*_):
@@ -168,7 +173,7 @@ class NetworkView(QWidget):
         names={s['id']:s['name'] for s in self.owner.doc.spaces};query=self.filter.text().casefold()
         for r in search_records(self.owner.doc,self.equipment,query,(self.page.value()-1)*2000) if 'position_runs' in self.equipment else self.equipment['records']:
             owners=', '.join(names.get(i,i) for i in r['spaces']);near=', '.join(names.get(i,i) for i in r['adjacent_spaces']);text=owners+(' / 경계 인접 '+near if near else '')
-            values=[r['category'],r['block'],str(r['position']),text or '미지정','미확인']
+            values=[r.get('device_kind',r['category']),r['block'],str(r['position']),text or '미지정','미확인']
             if 'position_runs' not in self.equipment and query and query not in ' '.join(values).casefold():continue
             if len(self.visible_records)>=2000:break
             row=len(self.visible_records);self.visible_records.append(r);self.table.insertRow(row)

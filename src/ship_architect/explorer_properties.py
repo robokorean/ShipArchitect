@@ -18,6 +18,10 @@ def format_record(record, title, space_names, reasons):
         result.extend((f"용도  {record['purpose']}",f"색상  {record.get('color','기본')}   불투명도  {record.get('opacity',80)}/255"))
     if record.get('position') is not None:
         result.append(f"좌표  {tuple(record['position'])}")
+    if record.get('device_kind'):
+        result.append('장치 구분  ' + record['device_kind'])
+    if record.get('candidate_spaces') or record.get('adjacent_candidates'):
+        result.append('분석 후보  ' + ', '.join(record.get('candidate_spaces',[]) + record.get('adjacent_candidates',[])))
     if record.get('category'):
         result.append(f"설비 종류  {record['category']}")
     state = {'auto':'등록 가능','review':'검토 필요','exclude':'제외','registered':'등록됨'}.get(record.get('decision'),record.get('status'))

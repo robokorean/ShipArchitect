@@ -1,5 +1,6 @@
 """One-click analysis, contextual review, and approved metadata edits."""
 from copy import deepcopy
+import json
 
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -34,6 +35,23 @@ class SpaceReview:
         layout.insertWidget(2,self.reveal)
         self.w.view.space_review=self
         self.update_selection(self.b.selection_key)
+
+    def compare_selected(self):
+        from .space_boundaries import boundary_relation
+        keys=sorted(k for k in self.b.keys_for_scope('group') if k.startswith(('space:','candidate:')))
+        if len(keys)!=2:
+            self.w.statusBar().showMessage('Ctrl로 공간 또는 후보 두 개를 선택하세요.')
+            return
+        report=boundary_relation(*(self.b.records[key] for key in keys))
+        self.b.summary_properties.setPlainText(
+            f"공간 경계 비교\n{keys[0]}\n{keys[1]}\n"
+            f"겹침 {report['overlap_cells']:,}셀 · 공유 공기 경계 {report['shared_air_faces']:,}면\n"
+            '각 공간의 복셀 ID와 경계를 유지합니다. 이동 가능성은 연결 분석에서 확인하세요.')
+        self.b.inspector.setPlainText(json.dumps(report,ensure_ascii=False,indent=2))
+        from .diagnostics import event
+        event('space_boundary_comparison',**report)
+        self.b.editor_dock.show()
+        self.b.editor_dock.raise_()
 
     def analyze(self):
         if self.w.loading or self.w.operation is not None:
@@ -190,6 +208,8 @@ class SpaceReview:
                                  [(first,'#6ab5e0'),(second,'#efc46d')]):
                 return
             state=deepcopy(d.analysis_state)
+            from .facilities import inherit_split
+            inherit_split(state,'space:'+first['id'],'space:'+second['id'])
             result=[first if s['id']==space['id'] else s for s in d.spaces]+[second]
             self.w.reject()
             commit(d,state,result,'space_split',active=first['id'])

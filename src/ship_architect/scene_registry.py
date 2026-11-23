@@ -69,6 +69,9 @@ def discover(doc, result, inventory, cancel, state=None):
             continue
         data = record(doc, block, xyz, rows)
         output[key] = dict(data, label=label, status='닫힘' if feature['state_evidence']=='open=false' else '통행 미확인')
+    for item in inventory.get('assembly_candidates',[])[:4096]:
+        key=stable_key('connection:',item['positions'])
+        output[key]=dict(item,label='설비 인접 후보',spaces=[],candidate_ids=[])
     for item in inventory.get('elevator_candidates', [])[:1024]:
         key = stable_key('lift:', sorted(item['positions']))
         output[key] = dict(item, label='승강기 층 연결', status='통행 미확인')

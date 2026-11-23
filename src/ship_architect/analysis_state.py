@@ -9,6 +9,8 @@ EQUIPMENT_TYPES=('Create','ComputerCraft','추진 설비 후보','전력 설비 
 
 def validate(value,size):
     if not isinstance(value,dict) or len(json.dumps(value))>48_000_000:raise ValueError('분석 설정 형식/48MB 한도 오류')
+    from .facilities import validate_facilities
+    validate_facilities(value.get("facilities", {}))
     from .scene_registry import validate_scene
     validate_scene(value,size)
     from .space_organization import validate_memberships

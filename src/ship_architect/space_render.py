@@ -3,8 +3,8 @@ from collections import OrderedDict
 from time import perf_counter
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPen, QPolygonF
+from PySide6.QtCore import QLineF, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPicture, QPolygonF
 
 from .chunks import checkpoint
 from .diagnostics import event
@@ -46,6 +46,7 @@ class SpaceRenderer:
         self.performance = Performance()
         self.meshes = ByteCache(16 * 1024**2, 512)
         self.tiles = ByteCache(8 * 1024**2, 4096)
+        self.pictures = ByteCache(4 * 1024**2, 64)
         self.metadata = OrderedDict()
         self.failed = OrderedDict()
         self.lod = {}
@@ -73,14 +74,17 @@ class SpaceRenderer:
         self.meshes = ByteCache(self.meshes.limit, self.meshes.entries)
         self.tiles = ByteCache(self.tiles.limit, self.tiles.entries)
         self.failed.clear()
+        self.pictures = ByteCache(self.pictures.limit, self.pictures.entries)
         self.lod.clear()
 
     def begin(self):
         self.performance.begin()
         self.display_states={}
         self.config = validated(getattr(self.view, 'render_quality', {}))
-        self.meshes.limit = int(self.config['cache_mib'] * 1024**2 * 2 / 3)
+        self.meshes.limit = int(self.config['cache_mib'] * 1024**2 / 2)
         self.meshes.trim()
+        self.pictures.limit = int(self.config['cache_mib'] * 1024**2 / 6)
+        self.pictures.trim()
         self.requested = {}
         revision = self.view.doc.revision
         if self.revision != revision:
@@ -201,7 +205,8 @@ class SpaceRenderer:
 
     def stats(self):
         return self.performance.snapshot() | {
-            'cache_bytes': self.meshes.bytes + self.tiles.bytes,
+            'cache_bytes': self.meshes.bytes + self.tiles.bytes + self.pictures.bytes,
+            'picture_cache_hits': self.pictures.hits, 'picture_cache_bytes': self.pictures.bytes,
             'cache_hits': self.meshes.hits + self.tiles.hits,
             'cache_misses': self.meshes.misses + self.tiles.misses,
             'clip_ms': round(self.clip_ms, 2), 'mesh_ms': round(self.mesh_ms, 2),
@@ -417,6 +422,27 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
                 continue
             packet, partial = inflight[0], True
         _, tiles, edges = packet
+        tint = QColor(item.get('color', '#ffce62') if highlight else '#54bfc9' if candidates else color(item))
+        xray = not highlight or hull is None or hull.selection_xray.isChecked()
+        # The key uses the displayed frame's transform, including during asynchronous camera updates.
+        picture_key = (key, id(tiles), id(edges), renderer.clip, allowed, partial,
+                       tuple(view.center), tuple(view.basis.ravel()), float(view.scale),
+                       tuple(view.origin), tuple(direction), view.width(), view.height(),
+                       tint.rgba(), opacity, highlight, selectable, view.interaction_active)
+        cached = renderer.pictures.get(picture_key) if xray else None
+        if cached is not None:
+            _, picture, hits, facts = cached
+            painter.drawPicture(0, 0, picture)
+            for field, value in facts.items():
+                stats[field] += value
+            renderer.used[lane] += facts['faces']
+            renderer.display_states[key] = 'exact' if facts['exact'] else 'simplified'
+            if selectable:
+                if key.startswith('space:'):
+                    view.space_hits.extend((item['id'], poly) for poly, depth in hits)
+                else:
+                    view.scene_hits.extend((key, poly, depth) for poly, depth in hits)
+            continue
         started = perf_counter()
         q, screen, count = _project_faces(view, tiles, direction)
         stats['visible_tiles'] += count
@@ -436,18 +462,22 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
         stats['exact' if exact else 'simplified'] += 1
         renderer.display_states[key]='exact' if exact else 'simplified'
         started = perf_counter()
-        tint = QColor(item.get('color', '#ffce62') if highlight else '#54bfc9' if candidates else color(item))
+        picture = QPicture()
+        target = QPainter(picture) if xray else painter
+        target.setRenderHint(QPainter.RenderHint.Antialiasing, painter.testRenderHint(QPainter.RenderHint.Antialiasing))
+        hits = []
+        selection_exact = 0
         fill = QColor(tint)
         fill.setAlpha(opacity)
-        painter.setBrush(fill)
-        painter.setPen(Qt.PenStyle.NoPen)
-        xray = not highlight or hull is None or hull.selection_xray.isChecked()
+        target.setBrush(fill)
+        target.setPen(Qt.PenStyle.NoPen)
         drawn=0
         for index in selected_faces:
             if not xray and view.occluded_point(q[index].mean(axis=0)):
                 continue
             poly = QPolygonF([QPointF(*pt) for pt in screen[index]])
-            painter.drawPolygon(poly)
+            target.drawPolygon(poly)
+            hits.append((poly, float(depth[index])))
             drawn+=1
             if selectable:
                 if key.startswith('space:'):
@@ -458,16 +488,25 @@ def draw_volumes(view, painter, candidates=False, spaces_override=None, selectab
         if highlight and edges is not None:
             pixels = view.project(edges)
             inside = in_view(view, pixels.min(axis=1), pixels.max(axis=1))
-            painter.setPen(QPen(tint, 1.7))
+            target.setPen(QPen(tint, 1.7))
             hit = np.flatnonzero(inside)
             # Preserve bounded responsiveness when thousands of edges project together.
             limit = 200 if view.interaction_active else 12000
-            stats['selection_exact'] += int(exact and len(hit)<=limit)
+            selection_exact = int(exact and len(hit)<=limit)
+            stats['selection_exact'] += selection_exact
             if len(hit) > limit:
                 hit = hit[::(1+len(hit)//limit)]
-            for j in hit:
-                if xray or not view.occluded_point(edges[j].mean(axis=0)):
-                    painter.drawLine(QPointF(*pixels[j,0]), QPointF(*pixels[j,1]))
+            lines = [QLineF(QPointF(*pixels[j,0]), QPointF(*pixels[j,1])) for j in hit
+                     if xray or not view.occluded_point(edges[j].mean(axis=0))]
+            target.drawLines(lines)
+        if xray:
+            target.end()
+            painter.drawPicture(0, 0, picture)
+            facts = {'faces':len(selected_faces), 'exact':int(exact),
+                     'simplified':int(not exact), 'visible_tiles':count,
+                     'selection_expected':0, 'selection_exact':selection_exact}
+            renderer.pictures.put(picture_key, (packet, picture, hits, facts),
+                                  int(picture.size()) + len(hits) * 160 + 512)
         stats['draw_ms'] += (perf_counter() - started) * 1000
     draw_summaries(view,painter,summaries,highlight,stats)
     painter.setBrush(Qt.BrushStyle.NoBrush)

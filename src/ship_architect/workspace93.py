@@ -52,6 +52,8 @@ class Workspace93:
         w.structure_review.attach()
         from .space_review_ui import SpaceReview
         self.b.space_review=SpaceReview(self.b)
+        from .facility_ui import FacilityTools
+        self.b.facilities=FacilityTools(self.b)
     def show(self,widget):
         self.bottom.setCurrentWidget(widget);self.result_dock.show();self.result_dock.raise_();
         if not self.result_dock.isFloating():self.w.resizeDocks([self.result_dock],[230],Qt.Orientation.Vertical)

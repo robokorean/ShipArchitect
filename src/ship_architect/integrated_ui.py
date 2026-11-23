@@ -23,7 +23,7 @@ class IntegratedUI:
         owner.analysis_archive=AnalysisArchive(owner)
         self.configure_drawing();self.configure_properties();self.configure_routes();self.configure_visibility();self.build_ribbon()
         self.b.scene_dock.setWindowTitle('장면 탐색기');self.b.editor_dock.setWindowTitle('속성 편집기')
-        owner.setWindowTitle('Ship Architect v0.9.3.12 · 통합 설계 작업공간')
+        owner.setWindowTitle('Ship Architect v0.9.3.13 · 통합 설계 작업공간')
         # Legacy toolbar actions remain the same QAction objects used by the ribbon.
         for bar in (owner.toolbar,*self.b.modebars):bar.hide()
         self.b.toolmenu.clear();self.b.toolmenu.addAction('리본 그룹 전체 복원',self.restore_groups)
@@ -168,7 +168,7 @@ class IntegratedUI:
         def common(labels):return [(t,actions[t]) for t in labels]
         specs={
           '프로젝트':[('파일',common(['새 프로젝트','.schem 열기','프로젝트 열기','저장','.schem 내보내기'])),('공간',[('공간 분석',lambda:b.space_review.analyze())]),('기록',common(['실행 취소','다시 실행','대화 기록']))],
-          '공간':[('공간 생성·편집',[('분석 옵션',lambda:self.open_properties(2)),('공간 추가',m.create),('합치기',lambda:b.space_review.merge()),('분리',lambda:b.space_review.split()),('경계 편집',self.open_drawing)]),('속성',[('이름·용도',lambda:self.open_properties(0)),('공간 통계',m.analyze),('공간 기록',m.show_history),('공간별 실행 취소',m.undo_space)]),('가져오기',[('분석 후보 가져오기',m.import_candidates),('이전 구역 가져오기',m.import_legacy),('사각 선택 복귀',m.clear_active)]),('분석 관리',[('공간 표시',lambda:w.space_tools.presentation_menu()),('공간 삭제 메뉴',self.space_deletion_menu)])],
+          '공간':[('공간 생성·편집',[('분석 옵션',lambda:self.open_properties(2)),('공간 추가',m.create),('시설로 묶기',lambda:b.facilities.edit()),('합치기',lambda:b.space_review.merge()),('분리',lambda:b.space_review.split()),('경계 편집',self.open_drawing)]),('속성',[('이름·용도',lambda:self.open_properties(0)),('공간 통계',m.analyze),('공간 기록',m.show_history),('공간별 실행 취소',m.undo_space)]),('가져오기',[('분석 후보 가져오기',m.import_candidates),('이전 구역 가져오기',m.import_legacy),('사각 선택 복귀',m.clear_active)]),('분석 관리',[('공간 표시',lambda:w.space_tools.presentation_menu()),('공간 삭제 메뉴',self.space_deletion_menu)])],
           '설계':[('건축',[('수동 편집',lambda:self.open_properties(1)),('AI 건축',w.ai_panel.show_panel),('변경 미리보기',w.make_preview),('변경 전후',self.compare)]),('승인',[('안전 검토',lambda:self.open_properties(3)),('승인·적용',w.approve),('제안 취소',w.reject)]),('기록',common(['실행 취소','다시 실행','대화 기록']))],
           '분석':[('구조·통행',[('구조 검증',lambda:self.open_properties(self.tasks.structure_page)),('구조 분석 작업공간',self.open_analysis),('연결 분석',self.analyze),('두 공간 경로',b.route_selected),('경로 지우기',n.clear_route)]),('설비',[('설비 분석',self.equipment),('선택 초점',b.focus)])],
           '보기':[('뷰',[('3D 함선',lambda:b.open_tab(w.view)),('공통 도면',self.open_drawing),('2D/3D 동시 보기',lambda:w.split_mode.setChecked(not w.split_mode.isChecked())),('시점 초기화',w.view.reset_camera)]),('내부',[('선택 초점',b.focus),('내부 보기',b.interior),('고립',b.isolate),('숨김',b.hide_selected),('표시 전체 복원',b.restore_visibility),('단면·표시',self.show_view_controls),('작업 표시 프리셋',b.presets.menu)]),('작업공간',[('3D 분리',lambda:b.detach_view('3D')),('2D 분리',lambda:b.detach_view('2D')),('배치 저장',b.save),('기본 배치',b.reset_docks)])],

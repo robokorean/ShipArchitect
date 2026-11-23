@@ -186,6 +186,20 @@ class SpaceTools(QObject):
             label='즐겨찾기에서 제거' if key in self.b.favorites else '즐겨찾기에 추가'
             menu.addAction(label,lambda:self.b.toggle_favorite(key))
         menu.addAction('선택 위치로 이동',self.b.focus)
+        if key.startswith('facility:'):
+            fid=key.split(':',1)[1]
+            menu.addAction('시설 이름·용도 편집',lambda:self.b.facilities.edit(fid))
+            menu.addAction('시설 그룹 해제',lambda:self.b.facilities.remove(fid))
+        if any(k.startswith(('space:','candidate:')) for k in self.b.keys_for_scope('group')):
+            menu.addAction('선택 공간을 시설로 묶기',lambda:self.b.facilities.edit())
+            facilities=self.w.doc.analysis_state.get('facilities',{})
+            if facilities:
+                submenu=menu.addMenu('기존 시설에 추가')
+                for fid,facility in facilities.items():
+                    submenu.addAction(facility['name'],lambda checked=False,fid=fid:self.b.facilities.add_selection(fid))
+
+        if len([k for k in self.b.keys_for_scope('group') if k.startswith(('space:','candidate:'))])==2:
+            menu.addAction('두 공간 경계 비교',self.b.space_review.compare_selected)
         if self.candidate_ids() or key.startswith('candgroup:'):
             menu.addAction('후보 확정·등록',lambda:self.w.space_view.bulk.confirm(
                 {k[10:] for k in self.b.keys_for_scope('group') if k.startswith('candidate:')}))

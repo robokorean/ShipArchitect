@@ -5,6 +5,8 @@ from PySide6.QtCore import Qt,QPointF,QRectF
 from PySide6.QtGui import QPainter,QPen,QColor,QImage
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QComboBox,QSpinBox,QLabel,QCheckBox
 from .model import Bounds
+from .space_tiles import ByteCache
+from .space_render import clip_signature
 from .display import overlay_indices_visible,visible_space_runs
 from .space_display import visible as space_visible,alpha as space_alpha,candidate_spaces,color as display_color
 from .views import color,BACKGROUND
@@ -24,6 +26,27 @@ def sampled_space_mask(space,f,index,step,shape):
             row=y//step;lo=z//step;hi=lo+1
         if row<out.shape[0]:out[row,max(0,lo):min(out.shape[1],hi)]=True
     return out
+
+class PlaneMasks:
+    """Bounded, exact plane masks shared by base overlays and selection paint events."""
+    def __init__(self):
+        self.cache = ByteCache(8 * 1024**2, 512)
+
+    def get(self, runs, view, axis, index, step, shape):
+        clip = clip_signature(view)
+        key = (id(runs), clip, axis, index, step, shape)
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached[1]
+        low, high, levels = clip
+        relevant = [[y,z,max(a,low[0]),min(b,high[0])] for y,z,a,b in runs
+                    if low[1] <= y <= high[1] and low[2] <= z <= high[2]
+                    and (levels is None or y in levels) and a <= high[0] and b >= low[0]
+                    and (index is None or (y == index if axis == 1 else z == index if axis == 2 else a <= index <= b))]
+        mask = sampled_space_mask({'runs':relevant},axis,index,step,shape)
+        self.cache.put(key,(runs,mask),mask.nbytes + 256)
+        return mask
+
 
 class PlaneCanvas(QWidget):
     def __init__(self,panel):
@@ -105,7 +128,7 @@ class PlaneCanvas(QWidget):
 
 class AxisPlan(QWidget):
     def __init__(self,owner):
-        super().__init__();self.owner=owner;self.image=None;lay=QVBoxLayout(self);row=QHBoxLayout();self.orientation=QComboBox();self.orientation.addItems(VIEWS);row.addWidget(self.orientation)
+        super().__init__();self.owner=owner;self.image=None;self.masks=PlaneMasks();lay=QVBoxLayout(self);row=QHBoxLayout();self.orientation=QComboBox();self.orientation.addItems(VIEWS);row.addWidget(self.orientation)
         self.slice=QSpinBox();row.addWidget(QLabel('단면 좌표'));row.addWidget(self.slice);self.inspect=QCheckBox('블록 검사');row.addWidget(self.inspect);self.projection=QCheckBox('앞면 투영');self.projection.toggled.connect(self.refresh);row.addWidget(self.projection);lay.addLayout(row);self.canvas=PlaneCanvas(self);lay.addWidget(self.canvas,1);self.status=QLabel('공간 선택 후 실제 바닥/층으로 이동. 경계 도구는 공간 관리와 공유합니다.');self.status.setWordWrap(True);lay.addWidget(self.status)
         self.orientation.currentIndexChanged.connect(self.orientation_changed);self.slice.valueChanged.connect(self.refresh)
     def orientation_changed(self,*_):
@@ -143,13 +166,14 @@ class AxisPlan(QWidget):
             if self.owner.view.show_blocks:
                 keep=visible&sc.solid(a);rgba[keep]=palette[a[keep]]
         if self.owner.view.show_spaces or candidate_spaces(self.owner.view):
+            overlay_visible = overlay_indices_visible(ii,doc,self.owner.view) if not self.projection.isChecked() else None
             from .space_model import contains
             for s in (doc.spaces if self.owner.view.show_spaces else [])+candidate_spaces(self.owner.view):
                 if not space_visible(self.owner.view,s,s.get('_candidate',False)):continue
                 if self.owner.view.exact_space_only and s['id']!=doc.active_space_id:continue
-                inside=sampled_space_mask({'runs':visible_space_runs(s,doc,self.owner.view)},f,None if self.projection.isChecked() else index,step,a.shape)
+                inside=self.masks.get(s.get('runs',s.get('volume_runs',[])),self.owner.view,f,None if self.projection.isChecked() else index,step,a.shape)
                 if not self.projection.isChecked():
-                    xyz[f][:]=index;x,y,z=xyz;overlay_ii=(y*size[2]+z)*size[0]+x;inside &= overlay_indices_visible(overlay_ii,doc,self.owner.view)
+                    inside = inside & overlay_visible
                 c=QColor(display_color(s));alpha=space_alpha(self.owner.view,s,s.get('_candidate',False))/255
                 rgba[inside,:3]=(rgba[inside,:3]*(1-alpha)+np.array([c.red(),c.green(),c.blue()])*alpha).astype(np.uint8)
         if v==1:rgba=rgba[::-1]
