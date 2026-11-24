@@ -143,6 +143,7 @@ class DesignWorkspace:
         detail=QCheckBox('설계 명령 상세 수정')
         layout.addWidget(detail)
         self.plan_editor=QPlainTextEdit();self.plan_editor.setMaximumHeight(220);self.plan_editor.hide()
+        self.plan_editor.textChanged.connect(self.plan_changed)
         detail.toggled.connect(self.plan_editor.setVisible);layout.addWidget(self.plan_editor)
         recheck=QPushButton('수정한 설계 검증·미리보기');recheck.hide()
         detail.toggled.connect(recheck.setVisible)
@@ -153,6 +154,11 @@ class DesignWorkspace:
         self.reject=QPushButton('설계안 취소');self.reject.clicked.connect(self.w.reject)
         layout.addWidget(self.reject)
         layout.addStretch()
+
+    def plan_changed(self):
+        if self.w.proposal is not None and self.w.proposal.origin=='ai':
+            self.w.reject()
+            self.w.ai_panel.request_status.setText('설계 명령이 바뀌었습니다. 수정한 설계를 다시 검증해 미리보기하세요.')
 
     def goto(self,index):
         self.stage.blockSignals(True);self.stage.setCurrentIndex(index);self.stage.blockSignals(False)
@@ -252,7 +258,9 @@ class DesignWorkspace:
         result=self.w.ai_panel.last_result
         if result is not None and id(result)!=self.preview_identity:
             self.preview_identity=id(result)
+            self.plan_editor.blockSignals(True)
             self.plan_editor.setPlainText(json.dumps(result['plan'],ensure_ascii=False,indent=2))
+            self.plan_editor.blockSignals(False)
         if result is None and self.preview_identity is not None:
             self.plan_editor.clear();self.preview_identity=None
         p=self.w.proposal
@@ -265,8 +273,8 @@ class DesignWorkspace:
         self.ai_state.setText(self.w.ai_panel.server_status.text())
         self.ai_progress.setText(self.w.ai_panel.request_status.text())
         if p is not None:
-            if getattr(self,'proposal_identity',None)!=id(p):
-                self.proposal_identity=id(p)
+            if getattr(self,'proposal_for_counts',None) is not p:
+                self.proposal_for_counts=p
                 after=p.after if p.after is not None else np.full(len(p.indices),p.target,dtype=np.int32)
                 ids,totals=np.unique(after,return_counts=True)
                 self.material_counts={d.schematic.palette[int(value)]:int(count) for value,count in zip(ids,totals)}

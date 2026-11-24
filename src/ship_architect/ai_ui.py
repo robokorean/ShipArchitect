@@ -177,6 +177,7 @@ class AIPanel(QWidget):
             self.request_status.setText('현재 공간에서 설계안을 다시 생성한 뒤 수정하세요.')
             return
         context=old['context']
+        self.owner.reject()
         try:plan=parse_plan(raw,context)
         except ValueError as exc:
             self.request_status.setText('수정한 설계 형식 오류 · '+str(exc))

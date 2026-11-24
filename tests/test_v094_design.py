@@ -95,5 +95,9 @@ def test_edited_plan_is_revalidated_and_requires_explicit_approval(window,server
     wait_for(lambda:p.job is None and ready(w))
     assert w.proposal is not None and len(w.proposal.indices)==4
     assert not np.any(d.schematic.blocks)
-    w.reject()
+    w.integrated_ui.workflow.refresh()
+    w.integrated_ui.workflow.plan_editor.setPlainText('{invalid')
+    assert w.proposal is None
+    p.revalidate_edited_plan('{invalid')
+    assert w.proposal is None and '형식 오류' in p.request_status.text()
     assert not np.any(d.schematic.blocks)
