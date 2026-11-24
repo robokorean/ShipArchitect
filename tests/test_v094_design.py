@@ -20,7 +20,7 @@ def interior():
     d.analysis_state['scene_records']={
         'equip:4,3,4':dict(position=[4,3,4],block='computercraft:computer_advanced[facing=north]',
                           category='ComputerCraft',device_kind='CC 컴퓨터',operation='미확인'),
-        'route:uncertain':dict(positions=[[2,2,5],[11,2,5]],status='불확실',spaces=[s['id']])}
+        'route:uncertain':dict(label='검증용 미확정 경로',positions=[[2,2,5],[11,2,5]],status='불확실',spaces=[s['id']])}
     return d,d.selection
 
 
