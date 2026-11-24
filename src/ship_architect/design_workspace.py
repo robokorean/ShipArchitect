@@ -195,6 +195,16 @@ class DesignWorkspace:
         self.b.apply_properties();self.signature=None;self.refresh()
 
     def set_advanced(self,value):
+        # Give the target name the full narrow explorer width in the basic UI.
+        # Retain the user's advanced columns instead of overwriting their layout.
+        header=self.b.tree.header()
+        if value and hasattr(self,'advanced_tree_header'):
+            header.restoreState(self.advanced_tree_header)
+            del self.advanced_tree_header
+        elif not value:
+            if not hasattr(self,'advanced_tree_header'):
+                self.advanced_tree_header=header.saveState()
+            header.hideSection(1);header.hideSection(2)
         self.advanced=bool(value)
         self.ui.ribbon_bar.setVisible(value);self.bar.setVisible(not value)
         for action in self.w.menuBar().actions():

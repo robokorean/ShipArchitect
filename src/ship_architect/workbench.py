@@ -201,7 +201,7 @@ class Workbench:
         self.owner.resizeDocks([self.scene_dock,self.editor_dock],[280,360],Qt.Orientation.Horizontal)
     def save(self):
         try:
-            payload={'state':bytes(self.owner.saveState(91).toBase64()).decode(),'geometry':bytes(self.owner.saveGeometry().toBase64()).decode(),'floating_views':[k for k,h in self.return_buttons.items() if h.layout().count()>1],'mode':self.mode.currentText(),'expanded':self.expanded_keys(),'tree_header':bytes(self.tree.header().saveState().toBase64()).decode()}
+            payload={'state':bytes(self.owner.saveState(91).toBase64()).decode(),'geometry':bytes(self.owner.saveGeometry().toBase64()).decode(),'floating_views':[k for k,h in self.return_buttons.items() if h.layout().count()>1],'mode':self.mode.currentText(),'expanded':self.expanded_keys(),'tree_header':bytes(getattr(getattr(self.owner,'design_workspace',None),'advanced_tree_header',self.tree.header().saveState()).toBase64()).decode()}
             atomic_write(self.owner.data_dir/'workspace091.json',json.dumps(payload,ensure_ascii=False).encode());self.save_display()
         except OSError as exc:self.owner.statusBar().showMessage('작업공간 저장 실패: '+str(exc))
     def restore(self):

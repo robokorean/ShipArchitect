@@ -71,12 +71,14 @@ def test_basic_flow_and_advanced_tools_share_original_commands(window):
     w=window;f=w.integrated_ui.workflow
     f.set_advanced(False)
     assert f.bar.isVisible() and not w.integrated_ui.ribbon_bar.isVisible()
+    assert w.workbench.tree.header().isSectionHidden(1) and w.workbench.tree.header().isSectionHidden(2)
     assert f.command('프로젝트','저장') is w.integrated_ui.buttons['프로젝트','저장'].defaultAction()
     assert f.next_step.text()
     f.goto(1)
     assert w.ai_panel.interior_mode.isChecked() and f.pages.currentIndex()==1
     f.set_advanced(True)
     assert w.integrated_ui.ribbon_bar.isVisible()
+    assert not w.workbench.tree.header().isSectionHidden(1) and not w.workbench.tree.header().isSectionHidden(2)
     f.set_advanced(False)
     assert not w.integrated_ui.tasks.result_dock.isVisible()
 
