@@ -186,6 +186,10 @@ def compile_plan(doc,bounds,plan,context,revision,cancel=None,trace_id=None):
         before=doc.schematic.blocks.reshape(-1)[touched].copy();after=overlay.reshape(-1)[touched].copy()
         keep=before!=after;touched=touched[keep];before=before[keep];after=after[keep]
         if revision!=doc.revision:raise Cancelled('설계가 변경되어 계획을 폐기합니다.')
+        if context.get('interior_design'):
+            from .interior_design import protect_routes
+            try:protect_routes(doc,bounds,touched,cancel)
+            except ValueError as exc:raise PlanError(str(exc)) from exc
         for a in (touched,before,after):a.setflags(write=False)
         check=audit(touched, size_xyz=doc.schematic.size, bounds_lo=bounds.lo, bounds_hi=bounds.hi, origin='ai',before=before,after=after,palette=doc.schematic.palette,reference_bounds=doc.ship_bounds)
         event('ai_diff_prepared', trace_id=trace_id, critical=True,
@@ -204,7 +208,8 @@ def compile_plan(doc,bounds,plan,context,revision,cancel=None,trace_id=None):
         shadow.schematic.blocks=np.empty((0,0,0),np.int32)
 
 
-SYSTEM='''You are Ship Architect, a Minecraft Java 1.21.1 architectural planner. Use a short Korean summary (one sentence) and at most 2 short notes. Output ONLY one JSON object matching the schema. No code, tools, shell, NBT, settings, permissions or prose outside JSON.
+SYSTEM='''When interior_design is provided, use its user-approved facility context, equipment evidence and existing route constraints. Mod operation, uncertain connections and missing inventory are never confirmed facts. Keep route corridors empty. Propose an interior plan only, never claim it is applied.
+You are Ship Architect, a Minecraft Java 1.21.1 architectural planner. Use a short Korean summary (one sentence) and at most 2 short notes. Output ONLY one JSON object matching the schema. No code, tools, shell, NBT, settings, permissions or prose outside JSON.
 When exact_space is provided, design for its purpose inside its sparse cell shape only; relative Y,Z,X runs define membership. Treat omitted runs as unknown, never assume bbox gaps are usable. [0,0,0] is often OUTSIDE the shape. Use valid_cell_example_xyz and run coordinates, not a 1-cell origin placeholder. For broad requests cover the intended shape using small explicit operations; never claim applied or completed. Python may report zero changes. Use multiple small operations for L/T shaped spaces. Use full_region_box only as an absolute limit, not an instruction to enclose the whole ship. Design only what is requested. For intent=fill use add/fill over the requested volume, never floor/walls/ceiling. For rooms/interiors divide purpose-specific spaces, keep 2-block-wide / 3-block-high routes, use add for partitions and furniture/trim, erase for door openings and replace for glazing. Carve only safe approved existing decorations or blocks created in the same plan. Do not create a full-ship bounding-box shell. Coarse cells are large analysis boxes with inclusive BLOCK bounds, never a different coordinate system. Do not mistake the number of analysis cells for building size.
 Coordinates are RELATIVE to the selected region: [X,Y,Z], Y up, inclusive min/max. Use only allowed_materials verbatim. material_constraints pins each construction role to an EXACT block state. requested_targets, when present, is the permitted destination list. NEVER substitute stone or example materials for a requested material. If you cannot comply return operations:[] with an explanation. Never use world coordinates. Consider size, occupancy, layers, existing blocks and protected zones.
 Create a complete plan with at most 16 floor/walls/ceiling/column/add/fill/replace/erase operations. column is ONE vertical line (minX=maxX and minZ=maxZ), overwrite=false. floor=min Y plane, ceiling=max Y plane, walls=four VERTICAL sides over the entire minY..maxY height. For a full room, use the SAME full 3D box min/max for floor, walls AND ceiling, as shown in room_shell_example_if_requested. NEVER flatten the walls box to the floor Y plane. The example is only a hint when a room is requested; obey the actual request and materials. add only fills air; fill fills the box, replacing existing safe decoration only when overwrite=true and allow_existing=true. source is null except replace, which must name one exact existing decorative state. erase uses material minecraft:air. overwrite is false for add; true for replace/erase; floor/walls/ceiling should default false.
@@ -253,10 +258,13 @@ def material_context(doc,bounds,prompt='',bindings=None,previous=None,allow_exis
     return context
 
 
-def generate_design(client,model,doc,bounds,prompt,allow_existing=False,previous=None,timeout=180,cancel=None,progress=None,bindings=None,trace_id=None,record=None):
+def generate_design(client,model,doc,bounds,prompt,allow_existing=False,previous=None,timeout=180,cancel=None,progress=None,bindings=None,trace_id=None,record=None,interior_mode=False):
     if type(prompt) is not str or not 1<=len(prompt.strip())<=4000:raise PlanError('한국어 요청은 1~4,000자로 입력하세요.')
     if progress:progress(0,'선택 구역·재료·공간 분석 중')
     context=material_context(doc,bounds,prompt,bindings,previous,allow_existing,cancel)
+    if interior_mode:
+        from .interior_design import enrich_context
+        context=enrich_context(doc,bounds,context,cancel)
     revision=doc.revision
     event('ai_context', trace_id=trace_id, selected={'lo':bounds.lo,'hi':bounds.hi}, context=context)
     schema=plan_schema(context['allowed_materials'])
