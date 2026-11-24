@@ -42,7 +42,7 @@ class ChatView(QWidget):
         if not e:self.browser.setPlainText('이 프로젝트의 대화가 없습니다.');return
         def bubble(label,text,color):return '<div style="background:'+color+';padding:12px;margin:8px"><b>'+label+'</b><pre style="white-space:pre-wrap">'+html.escape(str(text))+'</pre></div>'
         parts=[bubble('사용자',e['prompt'],'#29415b'),bubble('작업 / 선택 구역',e['trace_id']+'\n'+json.dumps(e['selection'],ensure_ascii=False),'#223344')]
-        verified={k:v for k,v in e.get('actual',{}).items() if k in ('changed','added','removed','replaced','bbox','materials','warnings','space_id','outside_space_skipped','occupied_skipped','exterior_skipped','locked_skipped','operation_diagnostics','applied')}
+        verified={k:v for k,v in e.get('actual',{}).items() if k in ('changed','added','removed','replaced','bbox','materials','warnings','space_id','facility_id','outside_space_skipped','occupied_skipped','exterior_skipped','locked_skipped','operation_diagnostics','applied')}
         verified['protected_skipped']=e.get('protected_skipped',0)
         parts.append(bubble('Python 실제 결과 / 상태: '+STATUS.get(e['status'],e['status']),json.dumps(verified,ensure_ascii=False,indent=2),'#34384b'))
         for raw in e.get('responses',[]):parts.append(bubble('AI 응답 · 제안이며 미실행 주장',raw,'#263b3d'))
@@ -58,8 +58,13 @@ class ChatView(QWidget):
         e=self.selected()
         if not e:return False
         try:
-            doc=self.panel.owner.doc;sid=e['selection'].get('space_id')
-            if sid:
+            doc=self.panel.owner.doc;sid=e['selection'].get('space_id');fid=e['selection'].get('facility_id')
+            if fid:
+                from .facility_scope import select
+                from .space_model import bbox
+                b=Bounds(*bbox(select(doc,fid)))
+                sid=None
+            elif sid:
                 sp=next((s for s in doc.spaces if s['id']==sid),None)
                 if sp is None:raise ValueError('이 기록의 공간이 삭제되었습니다. 공간을 복원한 뒤 다시 실행하세요. 경계 상자로 대체하지 않습니다.')
                 from .space_model import bbox
@@ -67,8 +72,10 @@ class ChatView(QWidget):
             else:b=Bounds(tuple(e['selection']['lo']),tuple(e['selection']['hi']))
             b.validate(doc.schematic.size)
             self.panel.owner.reject()
-            doc.active_space_id=sid;self.panel.owner.set_selection(b);self.panel.owner.space_manager.refresh();self.panel.prompt.setPlainText(e['prompt'])
-            self.panel.last_plan=e.get('plan');self.panel.last_scope=(id(self.panel.owner.doc),b);self.panel.last_result=None
+            doc.active_space_id=sid;doc.active_design_facility=fid;self.panel.owner.set_selection(b);self.panel.owner.space_manager.refresh();self.panel.prompt.setPlainText(e['prompt'])
+            if fid:self.panel.owner.workbench.select_key('facility:'+fid)
+            self.panel.interior_mode.setChecked(bool(fid or e.get('interior_mode') or e.get('context',{}).get('interior_design')))
+            self.panel.last_plan=e.get('plan');self.panel.last_scope=(id(self.panel.owner.doc),b,doc.scope_token());self.panel.last_result=None
             self.panel.material_editor.populating=True;self.panel.material_editor.table.setRowCount(0);self.panel.material_editor.populating=False
             self.panel.material_editor.counts.setPlainText('과거 설계는 참고용입니다. 새 계획 생성·검증 후 승인하세요.');self.panel.material_editor.rebuild_button.setEnabled(False)
             for kind,combo in self.panel.material_editor.roles.items():combo.setCurrentText(e.get('bindings',{}).get(kind,''))

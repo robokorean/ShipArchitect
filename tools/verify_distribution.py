@@ -25,6 +25,16 @@ app=QApplication([]);w=MainWindow();w.ai_panel.timer.stop();errors=[];w.error=la
 d=Document(Schematic.empty(12,8,12));w._new_project_ready(d);wait_for(ready);target=d.add_material('minecraft:oak_planks');p=d.propose(Bounds((2,1,2),(4,1,4)),target,'floor',True);d.approve(p);w.refresh_views(p.indices);wait_for(ready);assert len(w.view.mesh)>0
 project=root/'user_data'/'clean.shipproj';d.save_project(project);schem=root/'user_data'/'clean.schem';d.export(schem,approved=True);expected=d.schematic.blocks.copy();meta=d.schematic.metadata_digest();q=Document.open_project(project);assert np.array_equal(q.schematic.blocks,expected);w.doc.dirty=False;w.load_path(schem);wait_for(ready);assert np.array_equal(w.doc.schematic.blocks,expected) and w.doc.schematic.metadata_digest()==meta
 assert 'minecraft:oak_planks' in vanilla()
+from ship_architect.space_model import new_space,bbox
+from ship_architect.facilities import save_facility
+from ship_architect.facility_scope import select
+fd=w.doc;fd.set_spaces([new_space([[2,2,2,3]],fd.schematic.size,'A'),new_space([[2,2,7,8]],fd.schematic.size,'B')])
+fid=save_facility(fd,['space:'+s['id'] for s in fd.spaces],'독립 시설','미지정');scope=select(fd,fid)
+fp=fd.propose(Bounds(*bbox(scope)),fd.add_material('minecraft:glass'),'add',False)
+assert len(fp.indices)==4 and fp.outside_space==3
+fd.approve(fp);fd.undo();assert np.array_equal(fd.schematic.blocks,expected)
+fd.redo();fd.undo();assert np.array_equal(fd.schematic.blocks,expected)
+fd.active_design_facility=None
 QMessageBox.question=lambda *a,**k:QMessageBox.StandardButton.Yes;QMessageBox.information=lambda *a,**k:None
 diag=root/'user_data'/'independent_diagnostic.zip';QFileDialog.getSaveFileName=lambda *a,**k:(str(diag),'ZIP (*.zip)');w.export_diagnostics();wait_for(ready);assert diag.exists()
 for name,module in tuple(sys.modules.items()):
@@ -32,7 +42,7 @@ for name,module in tuple(sys.modules.items()):
   path=Path(module.__file__).resolve()
   assert path.is_relative_to(root/'src') and not path.is_relative_to(forbidden), (name,str(path),str(root/'src'))
 assert not errors,errors
-result={'startup':True,'new_project':True,'real_3d_frame':w.view.frame is not None,'builtin_registry_resource':True,'manual_placement':9,'project_roundtrip':True,'schem_blocks_NBT_roundtrip':True,'schem_GUI_reload':True,'diagnostic_UI_export':True,'isolated_python':True,'clean_private_dependencies':True,'original_source_imports':False,'Windows_direct':sys.platform=='win32'}
+result={'startup':True,'new_project':True,'real_3d_frame':w.view.frame is not None,'builtin_registry_resource':True,'manual_placement':9,'project_roundtrip':True,'schem_blocks_NBT_roundtrip':True,'schem_GUI_reload':True,'diagnostic_UI_export':True,'isolated_python':True,'clean_private_dependencies':True,'original_source_imports':False,'facility_union_approval_undo_redo':True,'Windows_direct':sys.platform=='win32'}
 w.doc.dirty=False;w.close();wait_for(lambda:not w.isVisible());out.write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))
 '''
 def verify(archive,output):
@@ -40,7 +50,7 @@ def verify(archive,output):
  with tempfile.TemporaryDirectory(prefix='ShipArchitect 새 폴더 ') as tmp:
   folder=Path(tmp)
   with zipfile.ZipFile(archive) as z:z.extractall(folder)
-  root=folder/'ShipArchitect';runner=folder/'runner.py';runner.write_text(HARNESS);env=os.environ.copy();env['LOCALAPPDATA']=str(folder/'local_appdata');env.pop('PYTHONPATH',None);env['QT_QPA_PLATFORM']='offscreen';env['PYTHONNOUSERSITE']='1'
+  root=folder/'ShipArchitect';runner=folder/'runner.py';runner.write_text(HARNESS,encoding='utf-8');env=os.environ.copy();env['LOCALAPPDATA']=str(folder/'local_appdata');env.pop('PYTHONPATH',None);env['QT_QPA_PLATFORM']='offscreen';env['PYTHONNOUSERSITE']='1'
   # The original development source is physically unavailable during the run.
   source=Path(__file__).resolve().parents[1]/'src';quarantine=source.with_name('src_quarantined_for_release')
   source.rename(quarantine)

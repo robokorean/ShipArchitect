@@ -39,7 +39,7 @@ def ready(w):return not w.view.workers_running() and not w.view.render_timer.isA
 
 @pytest.fixture
 def window():
-    app=QApplication.instance() or QApplication([]);w=MainWindow();w.show();w.ai_panel.timer.stop();w.ai_panel.startup_probe.stop()
+    app=QApplication.instance() or QApplication([]);w=MainWindow();w.integrated_ui.workflow.set_advanced(True);w.show();w.ai_panel.timer.stop();w.ai_panel.startup_probe.stop()
     old={key:w.ai_panel.settings.value('ai/'+key) for key in ('url','model','timeout')}
     errors=[];w.error=errors.append
     wait_for(lambda:ready(w) and not w.ai_panel.busy())

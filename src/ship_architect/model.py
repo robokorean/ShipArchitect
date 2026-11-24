@@ -88,7 +88,7 @@ class Document:
         if 'minecraft:air' not in schematic.palette.values():
             schematic.palette[max(schematic.palette) + 1] = 'minecraft:air'
         self.project_id=hashlib.sha256((str(self.source)+hashlib.sha256(self.original).hexdigest()).encode()).hexdigest()[:32] if source else uuid.uuid4().hex
-        self.chat_store=None;self.chat_seed=None;self.chat_error=None;self.space_candidates=[];self.space_revision=None;self.spaces=[];self.active_space_id=None;self.floor_visibility={};self.floor_starts=[];self.view_settings={}
+        self.chat_store=None;self.chat_seed=None;self.chat_error=None;self.space_candidates=[];self.space_revision=None;self.spaces=[];self.active_space_id=None;self.active_design_facility=None;self.floor_visibility={};self.floor_starts=[];self.view_settings={}
         self.analysis_state={'equipment_rules':{},'space_rules':[],'decisions':{}};self.block_epoch=0;self.spatial_dirty=None
         self.zones = []
         self.history = []
@@ -182,15 +182,23 @@ class Document:
     def active_space(self):
         return next((s for s in self.spaces if s['id']==self.active_space_id),None)
 
+    def permission_space(self):
+        facility_id=getattr(self,'active_design_facility',None)
+        if facility_id is not None:
+            from .facility_scope import resolve
+            return resolve(self,facility_id)
+        return self.active_space()
+
     def scope_token(self):
         from .space_model import token
         if self.active_space_id is not None and self.active_space() is None:raise ValueError('선택 공간이 사라졌습니다. 공간을 다시 선택하세요.')
-        return token(self.active_space()) if self.active_space() is not None else None
+        space=self.permission_space()
+        return token(space) if space is not None else None
 
     def check_space(self,indices,expected):
         from .space_model import contains
         if self.scope_token()!=expected:raise ValueError('공간 선택/경계가 바뀌었습니다. 다시 미리보기하세요.')
-        if self.active_space() is not None and not np.all(contains(self.active_space(),indices,self.schematic.size)):
+        if self.permission_space() is not None and not np.all(contains(self.permission_space(),indices,self.schematic.size)):
             raise ValueError('정확한 공간 셀 밖의 변경을 차단했습니다. 경계 상자는 건축 허가 범위가 아닙니다.')
 
     def set_spaces(self,spaces,action='space_edit',active=None,*,sync_scene=True):
@@ -284,7 +292,7 @@ class Document:
         pieces=[]
         before=[]
         total=protected=occupied=exterior_blocked=exterior_affected=locked_blocked=outside_space=same_material=occupied_skipped=0
-        space=self.active_space();scope_token=self.scope_token()
+        space=self.permission_space();scope_token=self.scope_token()
         indexed_space={'runs':np.asarray(space['runs'],np.int64)} if space is not None else None
         w,h,l=self.schematic.size
         for lo,hi in regions(self.schematic.blocks.shape,bounds):
@@ -411,7 +419,7 @@ class Document:
         if not np.array_equal(a[indices],proposal.before):raise ValueError('제안 이후 블록이 변경되었습니다.')
         record={'indices':indices.tolist(),'before':proposal.before.tolist(),'target':int(proposal.target),
             'mode':proposal.mode,'bounds':asdict(proposal.bounds),'allow_exterior':bool(allowed),'source_id':proposal.source_id,
-            'after':after.tolist() if proposal.after is not None else None,'origin':proposal.origin,'plan':proposal.plan,'trace_id':proposal.trace_id,'space_token':proposal.space_token,'space_id':self.active_space_id}
+            'after':after.tolist() if proposal.after is not None else None,'origin':proposal.origin,'plan':proposal.plan,'trace_id':proposal.trace_id,'space_token':proposal.space_token,'space_id':self.active_space_id,'facility_id':getattr(self,'active_design_facility',None)}
         self._apply_verified(indices,proposal.before,after)
         check['applied']=True
         self.undo_stack.append(record);self.redo_stack.clear()
@@ -519,7 +527,8 @@ class Document:
             indices=np.asarray(record['indices'],np.int64)
             if record.get('space_token'):
                 from .space_model import token,contains
-                sp=next((s for s in self.spaces if s['id']==record.get('space_id')),None)
+                from .facility_scope import resolve
+                sp=resolve(self,record['facility_id']) if record.get('facility_id') else next((s for s in self.spaces if s['id']==record.get('space_id')),None)
                 if sp is None or token(sp)!=record['space_token'] or not np.all(contains(sp,indices,self.schematic.size)):raise ValueError('공간 경계가 바뀌어 다시 실행할 수 없습니다.')
             after=record.get('after')
             if after is None:after=np.full(len(indices),record['target'],np.int32)

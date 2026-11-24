@@ -147,3 +147,18 @@ def test_invalid_imported_vanilla_state_is_protected_not_reused():
 def test_english_block_names_in_korean_request(phrase,state):
  bindings,states=request_bindings(phrase+'로 바닥을 만들어 줘',BlockRegistry())
  assert bindings=={'floor':state} and states==[state]
+
+
+def test_negative_role_instructions_are_not_material_names():
+ for instruction in ('추가하지 마', '변경하지 마', '건드리지 마', '생성하지 마'):
+  roles,states=request_bindings('재료는 minecraft:glass만 사용해. 바닥, 벽, 천장은 '+instruction+'.',BlockRegistry())
+  assert states==['minecraft:glass']
+  assert not roles
+ with pytest.raises(MaterialError):
+  request_bindings('천장은 미확인재료로 만들어 줘',BlockRegistry())
+
+
+def test_corridor_word_does_not_request_a_barrel():
+ roles,states=request_bindings('유리 장식을 추가하고 기존 통로는 그대로 유지해 줘. 천장은 추가하지 마.',BlockRegistry())
+ assert states==['minecraft:glass'] and not roles
+ assert request_bindings('통으로 바닥을 만들어 줘',BlockRegistry())[1]==['minecraft:barrel[facing=north,open=false]']

@@ -23,7 +23,7 @@ class IntegratedUI:
         owner.analysis_archive=AnalysisArchive(owner)
         self.configure_drawing();self.configure_properties();self.configure_routes();self.configure_visibility();self.build_ribbon()
         self.b.scene_dock.setWindowTitle('장면 탐색기');self.b.editor_dock.setWindowTitle('속성 편집기')
-        owner.setWindowTitle('Ship Architect v0.9.3.13 · 통합 설계 작업공간')
+        owner.setWindowTitle('Ship Architect v0.9.4 · 통합 설계 작업공간')
         # Legacy toolbar actions remain the same QAction objects used by the ribbon.
         for bar in (owner.toolbar,*self.b.modebars):bar.hide()
         self.b.toolmenu.clear();self.b.toolmenu.addAction('리본 그룹 전체 복원',self.restore_groups)
@@ -38,6 +38,8 @@ class IntegratedUI:
         from .workspace93 import Workspace93
         self.tasks=Workspace93(self);self.tasks.attach()
         self.sync_timer=QTimer(owner);self.sync_timer.setInterval(120);self.sync_timer.timeout.connect(self.sync_actions);self.sync_timer.start();self.sync_actions()
+        from .design_workspace import DesignWorkspace
+        self.workflow=DesignWorkspace(self)
     def configure_drawing(self):
         w=self.owner;m=w.space_manager;a=self.b.axis_plan
         # One orientation selector, one editing mode, one exact top-plan engine.

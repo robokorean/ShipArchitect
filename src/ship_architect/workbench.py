@@ -201,7 +201,7 @@ class Workbench:
         self.owner.resizeDocks([self.scene_dock,self.editor_dock],[280,360],Qt.Orientation.Horizontal)
     def save(self):
         try:
-            payload={'state':bytes(self.owner.saveState(91).toBase64()).decode(),'geometry':bytes(self.owner.saveGeometry().toBase64()).decode(),'floating_views':[k for k,h in self.return_buttons.items() if h.layout().count()>1],'mode':self.mode.currentText(),'expanded':self.expanded_keys(),'tree_header':bytes(self.tree.header().saveState().toBase64()).decode()}
+            payload={'state':bytes(self.owner.saveState(91).toBase64()).decode(),'geometry':bytes(self.owner.saveGeometry().toBase64()).decode(),'floating_views':[k for k,h in self.return_buttons.items() if h.layout().count()>1],'mode':self.mode.currentText(),'expanded':self.expanded_keys(),'tree_header':bytes(getattr(getattr(self.owner,'design_workspace',None),'advanced_tree_header',self.tree.header().saveState()).toBase64()).decode()}
             atomic_write(self.owner.data_dir/'workspace091.json',json.dumps(payload,ensure_ascii=False).encode());self.save_display()
         except OSError as exc:self.owner.statusBar().showMessage('작업공간 저장 실패: '+str(exc))
     def restore(self):
@@ -529,6 +529,8 @@ class Workbench:
         if self.selection_key not in self.nodes and not (self.selection_key or '').startswith('block:'):
             self.selection_key=None;self.selected_xyz=None
             self.inspector.clear()
+        if getattr(d,'active_design_facility',None) not in d.analysis_state.get('facilities',{}):
+            d.active_design_facility=None
         view=self.owner.view
         if getattr(view,'route_key',None) and view.route_key not in self.records:
             view.route_key=None
@@ -814,6 +816,10 @@ class Workbench:
         item=current if current in items else items[-1] if items else None
         key=item.data(0,ROLE) if item else None
         self.selection_key=key
+        facility_id=key.split(':',1)[1] if key and key.startswith('facility:') else None
+        if getattr(self.owner.doc,'active_design_facility',None)!=facility_id:
+            self.owner.reject()
+            self.owner.doc.active_design_facility=facility_id
         if getattr(self.owner.view,'temporary_space',None)!=key:self.owner.view.temporary_space=None
         self.selected_xyz=None
         record=self.records.get(key)
@@ -915,6 +921,9 @@ class Workbench:
             return out
         return None
     def block_selected(self,xyz):
+        if getattr(self.owner.doc,'active_design_facility',None) is not None:
+            self.owner.reject()
+            self.owner.doc.active_design_facility=None
         self.selected_xyz=tuple(xyz);self.selected_kind='block';self.selection_key='block:'+','.join(map(str,xyz));d=self.owner.doc;sc=d.schematic;state=sc.palette[int(sc.blocks[xyz[1],xyz[2],xyz[0]])]
         self.summary_properties.setPlainText(f'블록  {state}\n좌표  {tuple(xyz)}')
         self.inspector.setPlainText(json.dumps({'XYZ':list(xyz),'block_state':state,'protection':d.protection_at(xyz),'BlockEntity':xyz in sc.entity_positions()[0],'NBT 읽기 전용':self.nbt_info(xyz),'주의':'속성은 읽기 전용. 실제 변경은 미리보기·승인 필요'},ensure_ascii=False,indent=2));key='equip:'+','.join(map(str,xyz))
@@ -957,7 +966,7 @@ class Workbench:
         manager.refresh=refresh
         original_select=manager.select_id
         def select(sid,*args,move_drawing=True,**kwargs):
-            self.selected_xyz=None;result=original_select(sid,*args,**kwargs)
+            self.selected_xyz=None;self.owner.doc.active_design_facility=None;result=original_select(sid,*args,**kwargs)
             space=self.owner.doc.active_space()
             if space and move_drawing:
                 self.owner.layer.setValue(min(r[0] for r in space['runs']))
