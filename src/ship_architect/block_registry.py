@@ -111,6 +111,8 @@ def prompt_mentions(prompt,registry):
         while (at:=text.find(alias,start))>=0:
             end=at+len(alias);start=end
             if len(alias)==1 and text[end:end+1] not in ('로','으','을','를','만','블','바','벽','천','기','',','):continue
+            # '통로' is a corridor, not the one-character barrel label '통'.
+            if alias=='통' and text[end:end+1]=='로':continue
             lo=positions[at];hi=positions[end-1]+1
             if not re.search('[가-힣]',alias) and ((lo>0 and re.match(r'[A-Za-z0-9_]',prompt[lo-1])) or (hi<len(prompt) and re.match(r'[A-Za-z0-9_]',prompt[hi]))):continue
             if not any(lo<b and hi>a for a,b,_ in explicit):found.append((lo,hi,registry.resolve(next(iter(keys)))))
@@ -131,7 +133,7 @@ def request_bindings(prompt,registry,overrides=None):
     for hint in hints:
         lo,hi=hint.span(1);text=hint[1].strip()
         if any(lo<b and hi>a for a,b,_ in mentions):continue
-        if re.match(r'(?:유지|그대로|삭제|없애|없이|만들지|[0-9]|Y|선택|전체|높이|두께)',text):continue
+        if re.match(r'(?:유지|그대로|삭제|없애|없이|만들지|추가하지|변경하지|건드리지|생성하지|[0-9]|Y|선택|전체|높이|두께)',text):continue
         candidate=re.split(r'(?:으로|로)\s|(?:으로|로)(?=만들|설계|채워|지어|깔아)|\s*(?:만들어|만들고|설계해|해주세요|해줘|해 줘)',text)[0].strip()
         if candidate:registry.resolve(candidate)
     for hint in re.finditer(r'([가-힣A-Za-z0-9_:]+?)(?:으로|로)\s*(?:바닥|벽|천장|기둥|만들|건축|설계|채워|지어|깔아)',prompt):
@@ -146,10 +148,12 @@ def request_bindings(prompt,registry,overrides=None):
     bindings={}
     roles=list(re.finditer('바닥|벽면|벽|천장|기둥',prompt))
     for role in roles:
+        sentence_end=min([v for c in ('.','!','?','\n') if (v:=prompt.find(c,role.end()))>=0] or [len(prompt)])
+        if re.search(r'추가하지|변경하지|건드리지|생성하지|만들지',prompt[role.end():sentence_end]):continue
         # Commas delimit role/material assignments. A conjunction after a role
         # cannot steal the next role's material ("흰색 바닥과 유리 천장").
-        left=max(prompt.rfind(c,0,role.start()) for c in (',',';','\n'))+1
-        right=min([v for c in (',',';','\n') if (v:=prompt.find(c,role.end()))>=0] or [len(prompt)])
+        left=max(prompt.rfind(c,0,role.start()) for c in (',',';','\n','.'))+1
+        right=min([v for c in (',',';','\n','.') if (v:=prompt.find(c,role.end()))>=0] or [len(prompt)])
         candidates=[m for m in mentions if left<=m[0] and m[1]<=right]
         if re.match(r'\s*(?:과|와|및|하고)',prompt[role.end():]):candidates=[m for m in candidates if m[1]<=role.start()]
         elif re.match(r'\s*(?:은|는|을|를|에|:|=)',prompt[role.end():]):

@@ -27,7 +27,7 @@ class DesignWorkspace:
         for title,callback,help_text in (
             ('공간 분석',self.b.space_review.analyze,'함선의 실제 빈 공간과 설비 근거를 분석합니다.'),
             ('선택·수정',lambda:self.goto(0),'왼쪽에서 고른 공간이나 시설을 수정합니다.'),
-            ('AI 내부 설계',lambda:self.goto(1),'확정 공간의 용도·설비·경로를 근거로 설계안을 요청합니다.'),
+            ('AI 내부 설계',lambda:self.goto(1),'선택 공간·시설의 용도·설비·경로를 근거로 설계안을 요청합니다.'),
             ('변경 검토',lambda:self.goto(2),'실제 변경 블록과 위치를 확인하고 수정·승인합니다.'),
             ('저장',self.command('프로젝트','저장').trigger,'공간·시설·승인된 편집을 프로젝트로 저장합니다.')):
             action=self.bar.addAction(title);action.triggered.connect(callback)
@@ -40,6 +40,7 @@ class DesignWorkspace:
             options.addAction(self.command(category,title))
         options.addAction('모든 기능 검색',self.search_commands)
         options.addAction('AI 연결·재료 설정',self.ai_settings)
+        options.addAction('화면 배치 저장',lambda:self.b.save())
         options.addAction('고급/검증 작업공간',lambda:self.set_advanced(True))
         more.setMenu(options);self.bar.addWidget(more)
         self.w.addToolBar(Qt.ToolBarArea.TopToolBarArea,self.bar)
@@ -112,7 +113,7 @@ class DesignWorkspace:
         layout=self.page()
         self.ai_state=QLabel();self.ai_state.setWordWrap(True)
         layout.addWidget(self.ai_state)
-        label=QLabel('어떤 내부 시설을 만들까요? 기존 함선에서는 확정 공간을 먼저 선택하세요.')
+        label=QLabel('어떤 내부 시설을 만들까요? 기존 함선에서는 공간 또는 시설을 먼저 선택하세요.')
         label.setWordWrap(True);layout.addWidget(label)
         self.prompt=QPlainTextEdit()
         self.prompt.setPlaceholderText('예: 선택한 정비 구역에 참나무 작업대 구역과 유리 칸막이를 설계하고 기존 통로와 장치는 보존해 줘.')

@@ -54,13 +54,13 @@ def reserved_route_indices(doc, bounds, cancel=None):
 
 
 def enrich_context(doc, bounds, context, cancel=None):
-    space = doc.active_space()
+    space = doc.permission_space()
     if space is None and doc.source is not None:
-        raise ValueError('기존 함선의 내부 설계는 확정 공간을 선택한 뒤 시작하세요. 시설은 구성 공간을 선택할 수 있습니다.')
-    member = 'space:'+space['id'] if space is not None else None
+        raise ValueError('기존 함선의 내부 설계는 확정 공간 또는 사용자가 확인한 시설을 선택한 뒤 시작하세요.')
+    member = 'space:'+space['id'] if space is not None and 'facility_id' not in space else None
     facilities = []
     for key,item in doc.analysis_state.get('facilities',{}).items():
-        if member and member in item['members']:
+        if (member and member in item['members']) or (space is not None and space.get('facility_id')==key):
             facilities.append(dict(id=key,name=item['name'],purpose=item['purpose'],
                                    user_approved=item.get('approved') is True,
                                    member_count=len(item['members'])))
@@ -89,7 +89,9 @@ def enrich_context(doc, bounds, context, cancel=None):
                            points_truncated=len(points)>64))
     reserved = reserved_route_indices(doc,bounds,cancel)
     context['interior_design'] = {
-        'scope':'exact_registered_space' if space else 'new_project_selection',
+        'scope':'exact_facility_union' if space and space.get('facility_id') else 'exact_registered_space' if space else 'new_project_selection',
+        'facility_members':space.get('members',[]) if space else [],
+        'unconfirmed_members':space.get('unconfirmed_members',0) if space else 0,
         'facilities':facilities[:16], 'equipment_counts':dict(counts),
         'equipment_samples':equipment, 'equipment_total_in_stored_records':sum(counts.values()),
         'equipment_samples_truncated':sum(counts.values())>len(equipment),

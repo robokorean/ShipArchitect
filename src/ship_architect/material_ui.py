@@ -96,7 +96,7 @@ class MaterialEditor(QWidget):
     def rebuild(self):
         panel=self.panel;owner=panel.owner;doc=owner.doc;b=doc.selection
         if panel.job is not None or owner.operation is not None or owner.loading:return
-        if panel.last_plan is None or panel.last_result is None or panel.last_scope!=(id(doc),b):panel.request_status.setText('같은 구역에서 먼저 계획을 생성하세요.');return
+        if panel.last_plan is None or panel.last_result is None or panel.last_scope!=(id(doc),b,doc.scope_token()):panel.request_status.setText('같은 구역에서 먼저 계획을 생성하세요.');return
         try:
             plan=copy.deepcopy(panel.last_plan);states=[]
             for row,op in enumerate(plan['operations']):
@@ -108,10 +108,14 @@ class MaterialEditor(QWidget):
                 if state!='minecraft:air':doc.add_material(state)
             owner.reject();panel.sync_palette();revision=doc.revision;epoch=owner.preview_epoch;serial=panel.serial
             trace=uuid.uuid4().hex[:16];panel.current_trace=trace
-            panel.chat_store.start(doc.project_id,trace,'재료 직접 수정: '+plan['summary'],{'lo':list(b.lo),'hi':list(b.hi)},parent_trace=(panel.last_result['proposal'].trace_id),model='사용자 재료 수정',bindings={},allow_existing=panel.last_result['context']['allow_existing'])
+            panel.chat_store.start(doc.project_id,trace,'재료 직접 수정: '+plan['summary'],{'lo':list(b.lo),'hi':list(b.hi),'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=bool(panel.last_result['context'].get('interior_design')),parent_trace=(panel.last_result['proposal'].trace_id),model='사용자 재료 수정',bindings={},allow_existing=panel.last_result['context']['allow_existing'])
             allow=panel.last_result['context']['allow_existing']
             def worker(progress,cancel):
-                ctx=build_context(doc,b,allow,cancel);ctx['allowed_materials']=list(dict.fromkeys(states+ctx['allowed_materials']))[:128]
+                ctx=build_context(doc,b,allow,cancel)
+                if panel.last_result['context'].get('interior_design'):
+                    from .interior_design import enrich_context
+                    ctx=enrich_context(doc,b,ctx,cancel)
+                ctx['allowed_materials']=list(dict.fromkeys(states+ctx['allowed_materials']))[:128]
                 p=compile_plan(doc,b,plan,ctx,revision,cancel,trace)
                 return {**panel.last_result,'plan':plan,'context':ctx,'proposal':p,'attempts':0}
             def completed(result):

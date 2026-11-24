@@ -95,15 +95,24 @@ class AIPanel(QWidget):
             self.request_status.setText('현재 수동 작업이 끝난 뒤 요청하세요.');return
         prompt=self.prompt.toPlainText().strip()
         if not prompt:self.request_status.setText('한국어 건축 요청을 입력하세요.');return
-        doc=self.owner.doc;bounds=doc.selection
+        doc=self.owner.doc
+        if getattr(doc,'active_design_facility',None):
+            try:
+                from .space_model import bbox
+                from .model import Bounds
+                lo,hi=bbox(doc.permission_space())
+                self.owner.set_selection(Bounds(lo,hi))
+            except ValueError as exc:
+                self.request_status.setText(str(exc));return
+        bounds=doc.selection
         trace_id=uuid.uuid4().hex[:16];self.current_trace=trace_id;self.active_doc=doc
         try:
-            self.chat_store.start(doc.project_id,trace_id,prompt,{'lo':list(bounds.lo),'hi':list(bounds.hi),'space_id':doc.active_space_id,'space_token':doc.scope_token()},model=self.model.currentText(),bindings=self.material_editor.bindings(),allow_existing=self.allow_existing.isChecked(),parent_trace=self.parent_trace,refine=refine)
+            self.chat_store.start(doc.project_id,trace_id,prompt,{'lo':list(bounds.lo),'hi':list(bounds.hi),'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=self.interior_mode.isChecked(),model=self.model.currentText(),bindings=self.material_editor.bindings(),allow_existing=self.allow_existing.isChecked(),parent_trace=self.parent_trace,refine=refine)
         except Exception as exc:doc.chat_error=str(exc);event('chat_save_error',trace_id=trace_id,error=str(exc))
         self.parent_trace=None
         event('ai_request_started',trace_id=trace_id,critical=True,prompt=prompt,
               selection={'lo':bounds.lo,'hi':bounds.hi},revision=doc.revision)
-        scope=(id(doc),bounds)
+        scope=(id(doc),bounds,doc.scope_token())
         previous=self.last_plan if refine and scope==self.last_scope else None
         if refine and previous is None:
             doc.chat_update(trace_id,status='error',error='같은 구역에서 먼저 AI 계획을 생성하세요.')
@@ -127,7 +136,7 @@ class AIPanel(QWidget):
         epoch=self.owner.preview_epoch;revision=doc.revision
         self.serial+=1;serial=self.serial
         event('ai_request',trace_id=trace_id,critical=True,prompt=prompt,model=model,
-              selection={'lo':bounds.lo,'hi':bounds.hi,'space_id':doc.active_space_id,'space_token':doc.scope_token()}, revision=revision,
+              selection={'lo':bounds.lo,'hi':bounds.hi,'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()}, revision=revision,
               allow_existing=self.allow_existing.isChecked(), refine=bool(refine),bindings=bindings)
         self.generate_button.setEnabled(False);self.refine_button.setEnabled(False);self.cancel_button.setEnabled(True)
         self.request_status.setText('AI 계획 생성 중 · 수동 편집 가능 (설계/구역이 바뀌면 결과 폐기)')
@@ -150,10 +159,10 @@ class AIPanel(QWidget):
             event('ai_result_discarded',trace_id=self.current_trace,critical=True,reason='selection/revision/preview changed')
             self.request_status.setText('요청 중 구역/설계/미리보기가 변경되어 AI 결과를 폐기했습니다. 다시 생성하세요.');return
         actual=review(doc,result['proposal']);result['actual']=actual
-        doc.chat_update(trace,status='blocked' if actual['hull_risk'] else 'preview' if actual['changed'] else 'no_change',plan=result['plan'],actual=actual,model_claim=result['plan']['summary'],protected_skipped=result['proposal'].protected,occupied_skipped=result['proposal'].occupied,outside_space_skipped=result['proposal'].outside_space,space_id=doc.active_space_id)
+        doc.chat_update(trace,status='blocked' if actual['hull_risk'] else 'preview' if actual['changed'] else 'no_change',plan=result['plan'],actual=actual,model_claim=result['plan']['summary'],protected_skipped=result['proposal'].protected,occupied_skipped=result['proposal'].occupied,outside_space_skipped=result['proposal'].outside_space,space_id=doc.active_space_id,facility_id=getattr(doc,'active_design_facility',None))
         try:self.chat_store.changes(doc.project_id,trace,result['proposal'],doc.schematic.palette,doc.schematic.size)
         except Exception as exc:doc.chat_error=str(exc)
-        self.last_plan=result['plan'];self.last_scope=(id(doc),bounds);self.last_result=result
+        self.last_plan=result['plan'];self.last_scope=(id(doc),bounds,doc.scope_token());self.last_result=result
         self.plan_text.setPlainText(json.dumps(result['plan'],ensure_ascii=False,indent=2))
         self.context_text.setPlainText(json.dumps(result['context'],ensure_ascii=False,indent=2))
         self.material_editor.show_result(result)
@@ -173,7 +182,7 @@ class AIPanel(QWidget):
         old=self.last_result
         doc=self.owner.doc
         bounds=doc.selection
-        if old is None or self.last_scope!=(id(doc),bounds) or old['proposal'].revision!=doc.revision:
+        if old is None or self.last_scope!=(id(doc),bounds,doc.scope_token()) or old['proposal'].revision!=doc.revision:
             self.request_status.setText('현재 공간에서 설계안을 다시 생성한 뒤 수정하세요.')
             return
         context=old['context']
@@ -189,7 +198,7 @@ class AIPanel(QWidget):
         try:
             self.chat_store.start(doc.project_id,trace_id,'설계 명령 수동 수정',
                 {'lo':list(bounds.lo),'hi':list(bounds.hi),'space_id':doc.active_space_id,
-                 'space_token':doc.scope_token()},model='manual-plan-review',
+                 'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=bool(context.get('interior_design')),model='manual-plan-review',
                 bindings=self.material_editor.bindings(),allow_existing=context['allow_existing'],
                 parent_trace=old['proposal'].trace_id,refine=True)
         except Exception as exc:

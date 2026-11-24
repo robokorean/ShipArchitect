@@ -135,7 +135,7 @@ def build_context(doc,bounds,allow_existing=False,cancel=None):
         'protected_zones_truncated':len(zones)>32,'allow_existing':bool(allow_existing),
         'limits':{'max_operations':MAX_OPS,'max_changed_blocks':MAX_CHANGED,'exterior_override':False},
         'sampling_note':'Coarse cells are approximate. Python validates exact coordinates, collisions and protections.'}
-    space=doc.active_space()
+    space=doc.permission_space()
     context['space_token']=doc.scope_token()
     if space is not None:
         from .space_model import statistics
