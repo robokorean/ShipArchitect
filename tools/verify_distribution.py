@@ -50,7 +50,7 @@ def verify(archive,output):
  with tempfile.TemporaryDirectory(prefix='ShipArchitect 새 폴더 ') as tmp:
   folder=Path(tmp)
   with zipfile.ZipFile(archive) as z:z.extractall(folder)
-  root=folder/'ShipArchitect';runner=folder/'runner.py';runner.write_text(HARNESS);env=os.environ.copy();env['LOCALAPPDATA']=str(folder/'local_appdata');env.pop('PYTHONPATH',None);env['QT_QPA_PLATFORM']='offscreen';env['PYTHONNOUSERSITE']='1'
+  root=folder/'ShipArchitect';runner=folder/'runner.py';runner.write_text(HARNESS,encoding='utf-8');env=os.environ.copy();env['LOCALAPPDATA']=str(folder/'local_appdata');env.pop('PYTHONPATH',None);env['QT_QPA_PLATFORM']='offscreen';env['PYTHONNOUSERSITE']='1'
   # The original development source is physically unavailable during the run.
   source=Path(__file__).resolve().parents[1]/'src';quarantine=source.with_name('src_quarantined_for_release')
   source.rename(quarantine)
