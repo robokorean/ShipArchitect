@@ -160,3 +160,14 @@ def test_thousand_candidate_batch_preserves_overlap_decisions_and_progress():
     assert sum(c['decision']=='review' for c in d.space_candidates)==999
     assert any('1,000/1,000' in text for _,text in events)
     d.undo();assert not d.spaces
+
+
+def test_confirmed_candidates_send_summaries_not_full_mesh_or_run_payload():
+    from ship_architect.ai_design import material_context
+    d,cid=candidate_document();d.space_candidates[0]['confirmed']=True
+    d.space_candidates[0]['mesh']={'unbounded_geometry':'x'*100000}
+    ctx=material_context(d,d.selection,'minecraft:glass')
+    assert len(json.dumps(ctx).encode())<48000
+    assert len(ctx['space_candidates'])==1
+    assert 'mesh' not in ctx['space_candidates'][0] and 'volume_runs' not in ctx['space_candidates'][0]
+    assert ctx['space_candidates'][0]['id']==cid

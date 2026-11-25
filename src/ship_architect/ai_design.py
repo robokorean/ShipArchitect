@@ -235,7 +235,7 @@ def material_context(doc,bounds,prompt='',bindings=None,previous=None,allow_exis
     context=build_context(doc,bounds,allow_existing,cancel)
     import re
     context['intent']='fill' if re.search('채워|채우',prompt) and not re.search('방|통로|천장|바닥|벽|창문|문을',prompt) else 'design'
-    if doc.space_revision==doc.revision:context['space_candidates']=[{k:v for k,v in c.items() if k not in ('footprint','warnings')} for c in doc.space_candidates if c.get('confirmed') and all(a>=o and b<=e for a,b,o,e in zip(c['lo'],c['hi'],bounds.lo,bounds.hi))][:8]
+    if doc.space_revision==doc.revision:context['space_candidates']=[{k:c[k] for k in ('id','lo','hi','volume','decision','method','engine_id') if k in c} for c in doc.space_candidates if c.get('confirmed') and all(a>=o and b<=e for a,b,o,e in zip(c['lo'],c['hi'],bounds.lo,bounds.hi))][:8]
     # Requested entries cannot disappear behind the 128 entry context cap.
     prioritized=list(dict.fromkeys(requested+context['allowed_materials']))[:128]
     context['allowed_materials']=prioritized
@@ -256,6 +256,7 @@ def material_context(doc,bounds,prompt='',bindings=None,previous=None,allow_exis
         for op in context['room_shell_example_if_requested']:
             op['material']=pinned.get(op['kind'],requested[0])
     context['material_validation']={state:doc.registry().provenance(state) for state in requested}
+    if len(json.dumps(context,ensure_ascii=False).encode())>48000:raise PlanError('AI 구역 정보가 큽니다. 현재 선택 범위 안에서만 부분 설계를 켜고 범위를 줄이세요.')
     return context
 
 
