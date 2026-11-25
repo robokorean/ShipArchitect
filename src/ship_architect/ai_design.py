@@ -139,13 +139,14 @@ def build_context(doc,bounds,allow_existing=False,cancel=None):
     context['space_token']=doc.scope_token()
     if space is not None:
         from .space_model import statistics
-        exact=statistics(doc,space,cancel)
         runs=[[y-origin[1],z-origin[2],max(a,bounds.lo[0])-origin[0],min(b,bounds.hi[0])-origin[0]] for y,z,a,b in space['runs'] if bounds.lo[1]<=y<=bounds.hi[1] and bounds.lo[2]<=z<=bounds.hi[2] and a<=bounds.hi[0] and b>=bounds.lo[0]]
+        clipped={'runs':[[y+origin[1],z+origin[2],a+origin[0],b+origin[0]] for y,z,a,b in runs]}
         if not runs:raise PlanError('현재 사각 선택과 정확한 공간 셀의 교집합이 0개입니다. 공간을 다시 선택하세요.')
+        exact=statistics(doc,clipped,cancel)
         context['exact_space']={'id':space['id'],'name':space['name'],'purpose':space['purpose'],
             'run_columns':['relative_y','relative_z','relative_x0','relative_x1'],
-            'runs':[runs[int(i)] for i in np.unique(np.linspace(0,len(runs)-1,min(512,len(runs)),dtype=int))],'runs_truncated':len(runs)>512,'run_count':len(runs),'cell_count':sum(b-a+1 for y,z,a,b in runs),'space_total_cells':exact['cells'],
-            'existing_blocks':exact['blocks'],'valid_cell_example_xyz':[runs[0][2],runs[0][0],runs[0][1]],'floor_definition':'Lowest permitted cells per vertical column; existing physical floor below permission is protected and excluded. Do not edit below runs.', 'note':'BBox is display/search only. Python clips ALL operations to exact cells. Never fill gaps or build an enclosing bbox shell.'}
+            'runs':[runs[int(i)] for i in np.unique(np.linspace(0,len(runs)-1,min(128,len(runs)),dtype=int))],'runs_truncated':len(runs)>128,'run_count':len(runs),'cell_count':sum(b-a+1 for y,z,a,b in runs),'space_total_cells':sum(b-a+1 for _,_,a,b in space['runs']), 'context_cells':exact['cells'],
+            'existing_blocks':dict(sorted(exact['blocks'].items(),key=lambda p:-p[1])[:32]), 'existing_blocks_truncated':len(exact['blocks'])>32,'valid_cell_example_xyz':[runs[0][2],runs[0][0],runs[0][1]],'floor_definition':'Lowest permitted cells per vertical column; existing physical floor below permission is protected and excluded. Do not edit below runs.', 'note':'BBox is display/search only. Python clips ALL operations to exact cells. Never fill gaps or build an enclosing bbox shell.'}
     if revision!=doc.revision:raise Cancelled('구역 분석 중 설계가 변경되었습니다.')
     if len(json.dumps(context,ensure_ascii=False).encode())>48000:raise PlanError('AI에 전달할 구역 정보가 너무 큽니다. 더 작은 구역을 선택하세요.')
     return context

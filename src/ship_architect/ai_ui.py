@@ -46,6 +46,9 @@ class AIPanel(QWidget):
         self.material_editor=MaterialEditor(self);body.addWidget(self.material_editor)
         self.interior_mode=QCheckBox('함선 내부 설계 · 시설·설비·경로 근거 사용')
         body.addWidget(self.interior_mode)
+        self.use_selection=QCheckBox('현재 선택 범위 안에서만 부분 설계')
+        self.use_selection.setToolTip('공간·시설을 고른 뒤 좌표/2D/3D 선택을 줄입니다. 정확한 공간 셀과 겹치는 부분에만 설계합니다.')
+        body.addWidget(self.use_selection)
         self.allow_existing=QCheckBox('기존 일반 장식의 교체·삭제를 계획에 허용')
         self.allow_existing.setToolTip('기본은 원래 공기였던 칸만 변경. 원본 외피/장치/CC/BlockEntity/잠금 구역은 AI가 해제할 수 없습니다.')
         body.addWidget(self.allow_existing)
@@ -96,7 +99,7 @@ class AIPanel(QWidget):
         prompt=self.prompt.toPlainText().strip()
         if not prompt:self.request_status.setText('한국어 건축 요청을 입력하세요.');return
         doc=self.owner.doc
-        if getattr(doc,'active_design_facility',None):
+        if getattr(doc,'active_design_facility',None) and not self.use_selection.isChecked():
             try:
                 from .space_model import bbox
                 from .model import Bounds
@@ -107,7 +110,7 @@ class AIPanel(QWidget):
         bounds=doc.selection
         trace_id=uuid.uuid4().hex[:16];self.current_trace=trace_id;self.active_doc=doc
         try:
-            self.chat_store.start(doc.project_id,trace_id,prompt,{'lo':list(bounds.lo),'hi':list(bounds.hi),'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=self.interior_mode.isChecked(),model=self.model.currentText(),bindings=self.material_editor.bindings(),allow_existing=self.allow_existing.isChecked(),parent_trace=self.parent_trace,refine=refine)
+            self.chat_store.start(doc.project_id,trace_id,prompt,{'lo':list(bounds.lo),'hi':list(bounds.hi),'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=self.interior_mode.isChecked(),partial_scope=self.use_selection.isChecked(),model=self.model.currentText(),bindings=self.material_editor.bindings(),allow_existing=self.allow_existing.isChecked(),parent_trace=self.parent_trace,refine=refine)
         except Exception as exc:doc.chat_error=str(exc);event('chat_save_error',trace_id=trace_id,error=str(exc))
         self.parent_trace=None
         event('ai_request_started',trace_id=trace_id,critical=True,prompt=prompt,
@@ -198,7 +201,7 @@ class AIPanel(QWidget):
         try:
             self.chat_store.start(doc.project_id,trace_id,'설계 명령 수동 수정',
                 {'lo':list(bounds.lo),'hi':list(bounds.hi),'space_id':doc.active_space_id,
-                 'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=bool(context.get('interior_design')),model='manual-plan-review',
+                 'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=bool(context.get('interior_design')),partial_scope=self.use_selection.isChecked(),model='manual-plan-review',
                 bindings=self.material_editor.bindings(),allow_existing=context['allow_existing'],
                 parent_trace=old['proposal'].trace_id,refine=True)
         except Exception as exc:

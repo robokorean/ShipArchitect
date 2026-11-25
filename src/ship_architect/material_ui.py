@@ -108,7 +108,7 @@ class MaterialEditor(QWidget):
                 if state!='minecraft:air':doc.add_material(state)
             owner.reject();panel.sync_palette();revision=doc.revision;epoch=owner.preview_epoch;serial=panel.serial
             trace=uuid.uuid4().hex[:16];panel.current_trace=trace
-            panel.chat_store.start(doc.project_id,trace,'재료 직접 수정: '+plan['summary'],{'lo':list(b.lo),'hi':list(b.hi),'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=bool(panel.last_result['context'].get('interior_design')),parent_trace=(panel.last_result['proposal'].trace_id),model='사용자 재료 수정',bindings={},allow_existing=panel.last_result['context']['allow_existing'])
+            panel.chat_store.start(doc.project_id,trace,'재료 직접 수정: '+plan['summary'],{'lo':list(b.lo),'hi':list(b.hi),'space_id':doc.active_space_id,'facility_id':getattr(doc,'active_design_facility',None),'space_token':doc.scope_token()},interior_mode=bool(panel.last_result['context'].get('interior_design')),partial_scope=panel.use_selection.isChecked(),parent_trace=(panel.last_result['proposal'].trace_id),model='사용자 재료 수정',bindings={},allow_existing=panel.last_result['context']['allow_existing'])
             allow=panel.last_result['context']['allow_existing']
             def worker(progress,cancel):
                 ctx=build_context(doc,b,allow,cancel)

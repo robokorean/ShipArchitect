@@ -636,7 +636,8 @@ class MainWindow(QMainWindow):
         self.set_selection(Bounds((0, y, 0), (w-1, y, l-1)))
 
     def picked(self, xyz, shift=False):
-        if hasattr(self,'workbench'):self.workbench.block_selected(xyz)
+        if hasattr(self,'workbench') and not (shift and self.ai_panel.use_selection.isChecked() and getattr(self.doc,'active_design_facility',None)):
+            self.workbench.block_selected(xyz)
         x, y, z = xyz
         material = self.doc.schematic.palette[int(self.view.blocks[y, z, x])]
         self.last_point=(x,y,z)

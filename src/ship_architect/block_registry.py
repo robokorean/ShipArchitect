@@ -133,10 +133,13 @@ def request_bindings(prompt,registry,overrides=None):
     for hint in hints:
         lo,hi=hint.span(1);text=hint[1].strip()
         if any(lo<b and hi>a for a,b,_ in mentions):continue
+        if re.match(r'(?:(?:새로|다시)\s*)?(?:만들[지어고]|설계[해하]|수정[해하]|추가[해하]|변경[해하]|나누|설치[해하]|보존[해하])',text):continue
         if re.match(r'(?:유지|그대로|삭제|없애|없이|만들지|추가하지|변경하지|건드리지|생성하지|[0-9]|Y|선택|전체|높이|두께)',text):continue
         candidate=re.split(r'(?:으로|로)\s|(?:으로|로)(?=만들|설계|채워|지어|깔아)|\s*(?:만들어|만들고|설계해|해주세요|해줘|해 줘)',text)[0].strip()
         if candidate:registry.resolve(candidate)
     for hint in re.finditer(r'([가-힣A-Za-z0-9_:]+?)(?:으로|로)\s*(?:바닥|벽|천장|기둥|만들|건축|설계|채워|지어|깔아)',prompt):
+        if hint[1] in ('억지','함부','강제','무작정'):continue
+        if re.match(r'\s*(?:하지|하지는|말|지\s*마)',prompt[hint.end():]):continue
         if hint[1] in ('랜덤블록','랜덤블럭','여러블록','여러블럭','다른블록','다른블럭','임의블록','임의블럭'):continue
         if hint[1].endswith(('새','대','자동','적','순서','방식','방법')):continue
         if not any(hint.start(1)<b and hint.end(1)>a for a,b,_ in mentions):registry.resolve(hint[1])
