@@ -181,20 +181,32 @@ class SpatialBatch:
             self.record('space_crop_rule',transform)
         except Exception as e:self.owner.error(e)
     def confirm(self,ids=None):
-        try:
-            w=self.owner;d=w.doc;chosen=self.selected() if ids is None else [c for c in d.space_candidates if c['id'] in ids];pending={c['id'] for c in chosen if c.get('decision')!='registered'}
-            if not chosen:raise ValueError('등록할 후보를 선택하세요.')
-            if w.operation is not None or w.loading:return
-            if d.analysis_state.get('session_side')=='old':raise ValueError('저장 비교는 읽기 전용입니다. 신규 결과로 전환하세요.')
-            if any(c.get('source_block_epoch')!=d.block_epoch for c in chosen):raise ValueError('블록 변경 이후 후보가 오래되었습니다. 재분석하세요.')
-            r=copy.deepcopy(d.analysis_state.get('last_result') or self.result);spaces,r,added=register(d,r,False,{c['id'] for c in chosen});state=copy.deepcopy(d.analysis_state);state['last_result']=r
-            for c in r['candidates']:
-                if c['id'] in {c['id'] for c in chosen} and c['decision']=='registered':state.setdefault('decisions',{})[c.get('source_fingerprint',c['fingerprint'])]={'action':'registered',**({'runs':copy.deepcopy(c['volume_runs'])} if c.get('user_modified') else {})}
-            zones=copy.deepcopy(d.zones);commit(d,state,spaces,'space_manual_batch');record=d.undo_stack[-1];record['zones_before']=zones
-            for c in chosen:
-                if c['id'] in pending and added and any(q['id']==c['id'] and q['decision']=='registered' for q in r['candidates']):d.zones.append({'name':'확인 공간 '+c['id'],'lo':c['lo'],'hi':c['hi'],'space_footprint':c['footprint'],'space_kind':c['kind'],'space_volume_runs':copy.deepcopy(c['volume_runs']),'space_method':c.get('method'),'registered_space_id':next((q.get('registered_space_id') for q in r['candidates'] if q['id']==c['id']),None)})
-            record['zones_after']=copy.deepcopy(d.zones);self.result=r;self.refresh();w.space_manager.refresh();w.refresh_zones();w.refresh_history();self.panel.status.setText(f'정확한 3D 공간 {len(added)}개 등록. 기존 겹치는 공간은 보호합니다.')
-        except Exception as e:self.owner.error(e)
+        from time import perf_counter
+        from .registration import prepare,apply
+        w=self.owner;d=w.doc
+        if w.operation is not None or w.loading:return
+        started=perf_counter()
+        if isinstance(ids,bool):ids=None
+        selected_ids={c['id'] for c in self.selected()} if ids is None else set(ids)
+        if not selected_ids:w.error(ValueError('등록할 후보를 선택하세요.'));return
+        def done(prepared):
+            if w.operation is not None and w.operation.isInterruptionRequested():
+                self.panel.status.setText('등록을 취소했습니다. 변경 없음.');return
+            if w.doc is not d:
+                self.panel.status.setText('문서가 바뀌어 등록 결과를 적용하지 않았습니다.');return
+            try:
+                t=perf_counter();w.reject();apply(d,prepared)
+                prepared['metrics']['publish_seconds']=perf_counter()-t
+            except Exception as exc:w.error(exc);return
+            self.result=d.analysis_state['last_result'];self.panel.result=self.result
+            t=perf_counter()
+            self.refresh();w.space_manager.refresh();w.refresh_zones();w.refresh_history()
+            prepared['metrics']['ui_refresh_seconds']=perf_counter()-t
+            prepared['metrics']['total_seconds']=perf_counter()-started
+            self.last_registration_metrics=prepared['metrics']
+            event('space_registration_batch',trace_id=getattr(w.operation,'trace_id',None),selected=prepared['selected'],added=prepared['added'],**prepared['metrics'])
+            self.panel.status.setText(f"정확한 3D 공간 {prepared['added']}개 등록 · 기존 겹치는 공간 보호 · 실행 취소 가능")
+        w.run_operation(lambda progress,cancel:prepare(d,selected_ids,progress,cancel),done,'선택 후보 확정·등록 준비')
     def clear_compare(self):
         self.owner.view.validation_spaces=[];self.owner.view.partition_faces=[];self.owner.view.update();self.owner.space_manager.plan.update();self.owner.workbench.axis_plan.refresh()
     def compare(self):

@@ -90,6 +90,7 @@ def test_clean_and_protected_analysis_with_restore_and_approval(window,tmp_path)
             panel.panel.list.setCurrentRow(row)
             break
     panel.confirm()
+    wait_for(lambda:ready(window),seconds=30)
     assert len(d.spaces)==2 and d.spaces[0]==manual
     assert d.spaces[1]['provenance']['origin']=='approved_candidate'
     assert np.array_equal(blocks,d.schematic.blocks) and nbt==d.schematic.metadata_digest()

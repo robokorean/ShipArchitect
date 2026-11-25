@@ -62,18 +62,20 @@ class ChatView(QWidget):
             if fid:
                 from .facility_scope import select
                 from .space_model import bbox
-                b=Bounds(*bbox(select(doc,fid)))
+                scope=select(doc,fid)
+                b=Bounds(tuple(e['selection']['lo']),tuple(e['selection']['hi'])) if e.get('partial_scope') else Bounds(*bbox(scope))
                 sid=None
             elif sid:
                 sp=next((s for s in doc.spaces if s['id']==sid),None)
                 if sp is None:raise ValueError('이 기록의 공간이 삭제되었습니다. 공간을 복원한 뒤 다시 실행하세요. 경계 상자로 대체하지 않습니다.')
                 from .space_model import bbox
-                b=Bounds(*bbox(sp))
+                b=Bounds(tuple(e['selection']['lo']),tuple(e['selection']['hi'])) if e.get('partial_scope') else Bounds(*bbox(sp))
             else:b=Bounds(tuple(e['selection']['lo']),tuple(e['selection']['hi']))
             b.validate(doc.schematic.size)
             self.panel.owner.reject()
             doc.active_space_id=sid;doc.active_design_facility=fid;self.panel.owner.set_selection(b);self.panel.owner.space_manager.refresh();self.panel.prompt.setPlainText(e['prompt'])
             if fid:self.panel.owner.workbench.select_key('facility:'+fid)
+            self.panel.use_selection.setChecked(bool(e.get('partial_scope')))
             self.panel.interior_mode.setChecked(bool(fid or e.get('interior_mode') or e.get('context',{}).get('interior_design')))
             self.panel.last_plan=e.get('plan');self.panel.last_scope=(id(self.panel.owner.doc),b,doc.scope_token());self.panel.last_result=None
             self.panel.material_editor.populating=True;self.panel.material_editor.table.setRowCount(0);self.panel.material_editor.populating=False

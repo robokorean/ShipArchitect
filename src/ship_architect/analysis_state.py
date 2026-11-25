@@ -1,5 +1,6 @@
 """Validated project rules, immutable review choices and reversible analysis metadata."""
-import copy,json,re
+import copy,json,re,time
+from .metadata_copy import snapshot,history_after
 from .model import Bounds
 from .space_model import normalize,new_space,bbox
 from .spatial3d import fingerprint,intersects
@@ -7,15 +8,25 @@ METHODS=('3d_air_components','exterior_voxel_mesh')
 MAX_ANALYSIS_CANDIDATES=3072
 EQUIPMENT_TYPES=('Create','ComputerCraft','추진 설비 후보','전력 설비 후보','장식용 블록','미분류 모드 블록')
 
-def validate(value,size):
-    if not isinstance(value,dict) or len(json.dumps(value))>48_000_000:raise ValueError('분석 설정 형식/48MB 한도 오류')
+def validate(value,size,*,cancel=None):
+    from .chunks import checkpoint
+    if not isinstance(value,dict):raise ValueError('분석 설정 형식 오류')
+    if cancel is None:
+        too_large=len(json.dumps(value))>48_000_000
+    else:
+        length=0;too_large=False
+        for index,part in enumerate(json.JSONEncoder().iterencode(value)):
+            if index%1024==0:checkpoint(cancel)
+            length+=len(part)
+            if length>48_000_000:too_large=True;break
+    if too_large:raise ValueError('분석 설정 형식/48MB 한도 오류')
     from .facilities import validate_facilities
     validate_facilities(value.get("facilities", {}))
     from .scene_registry import validate_scene
     validate_scene(value,size)
     from .space_organization import validate_memberships
     validate_memberships(value.get('space_memberships',{}))
-    state=copy.deepcopy(value);rules=state.setdefault('equipment_rules',{})
+    state=snapshot(value);rules=state.setdefault('equipment_rules',{})
     if not isinstance(rules,dict) or len(rules)>4096:raise ValueError('설비 규칙 수 오류')
     for key,val in rules.items():
         if not isinstance(key,str) or not re.fullmatch(r'[a-z0-9_.-]+:[a-z0-9_./-]+(?:\[[a-z0-9_=,.-]+\])?',key) or val not in EQUIPMENT_TYPES:raise ValueError('정확한 블록 ID와 지원 분류가 필요합니다.')
@@ -55,7 +66,7 @@ def validate(value,size):
             for c in candidates:
                 c['volume_runs']=normalize(c.get('volume_runs',[]),size)
         else:
-            validate({'last_result':reference},size)
+            validate({'last_result':reference},size,cancel=cancel)
     changes=state.get('session_changes',[])
     if not isinstance(changes,list) or len(changes)>2*MAX_ANALYSIS_CANDIDATES:
         raise ValueError('비교 변경 목록 형식 오류')
@@ -63,18 +74,27 @@ def validate(value,size):
     if comparison is not None:
         if not isinstance(comparison,dict):raise ValueError('인식 비교 형식 오류')
         for key in ('old','new'):
-            validate({'last_result':comparison[key]},size)
+            validate({'last_result':comparison[key]},size,cancel=cancel)
         if len(comparison.get('matches',[]))>512:raise ValueError('비교 쌍 한도 초과')
     return state
 
-def commit(doc,state,spaces=None,action='analysis_settings',*,active=None):
-    state=validate(state,doc.schematic.size);before=copy.deepcopy(doc.analysis_state)
+def commit(doc,state,spaces=None,action='analysis_settings',*,active=None,metrics=None,cancel=None):
+    t=time.perf_counter();state=validate(state,doc.schematic.size,cancel=cancel)
+    if metrics is not None:metrics['state_validation_seconds']=time.perf_counter()-t
+    t=time.perf_counter();before=snapshot(doc.analysis_state)
+    if metrics is not None:metrics['undo_before_copy_seconds']=time.perf_counter()-t
+    t=time.perf_counter()
     if spaces is not None and state.get('scene_records'):
         from .scene_registry import bind_spaces
         bind_spaces(state['scene_records'],doc.spaces,spaces,doc.schematic.size)
+    if metrics is not None:metrics['scene_binding_seconds']=time.perf_counter()-t
+    t=time.perf_counter()
     doc.set_spaces(doc.spaces if spaces is None else spaces,action,(active or doc.active_space_id) if (active or doc.active_space_id) in {s['id'] for s in (doc.spaces if spaces is None else spaces)} else None,sync_scene=False)
-    record=doc.undo_stack[-1];record['analysis_before']=before;record['analysis_after']=copy.deepcopy(state);doc.analysis_state=state
-    doc.space_candidates=copy.deepcopy(state.get('last_result',{}).get('candidates',[]));doc.space_revision=doc.revision
+    if metrics is not None:metrics['space_validation_history_seconds']=time.perf_counter()-t
+    t=time.perf_counter()
+    record=doc.undo_stack[-1];record['analysis_before']=before;record['analysis_after']=history_after(doc.analysis_state,state,before);doc.analysis_state=state
+    doc.space_candidates=snapshot(state.get('last_result',{}).get('candidates',[]));doc.space_revision=doc.revision
+    if metrics is not None:metrics['after_and_candidates_copy_seconds']=time.perf_counter()-t
 
 def refresh_shape(c):
     if c.get('method')=='exterior_voxel_mesh':
@@ -117,18 +137,25 @@ def apply_rules(result,state,size):
     result['counts']=dict(Counter(c['decision'] for c in result['candidates']))
     return result
 
-def register(doc,result,automatic=True,ids=None):
+def register(doc,result,automatic=True,ids=None,*,progress=lambda *_:None,cancel=None):
     if result.get('archive_read_only'):
         raise ValueError('블록 일치가 확인되지 않은 저장 분석은 등록할 수 없습니다. 신규 분석을 실행하세요.')
     if result.get('block_epoch')!=doc.block_epoch:raise ValueError('블록 변경 뒤 분석 결과가 오래되었습니다.')
-    spaces=copy.deepcopy(doc.spaces);added=[];candidates=copy.deepcopy(result['candidates']);rows={};existing={fingerprint(s['runs']):s['id'] for s in spaces}
+    spaces=snapshot(doc.spaces);added=[];candidates=snapshot(result['candidates']);rows={};existing={fingerprint(s['runs']):s['id'] for s in spaces}
     for s in spaces:
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
     from .analysis_sessions import matches_document
     signature_matches=matches_document(doc,result.get('provenance',{}))
     w,h,l=doc.schematic.size
+    from .chunks import checkpoint
+    import numpy as np
+    air_ids=[i for i,state in doc.schematic.palette.items() if state.split('[')[0] in ('minecraft:air','minecraft:cave_air','minecraft:void_air')]
+    total=sum(1 for c in candidates if ids is None or c['id'] in ids);processed=0
     for c in candidates:
+        checkpoint(cancel)
         if ids is not None and c['id'] not in ids:continue
+        processed+=1
+        if processed==1 or processed%16==0 or processed==total:progress(5+int(50*processed/max(total,1)),f'후보 검증·등록 준비 {processed:,}/{total:,}개')
         if c.get('decision')=='registered':continue
         if c.get('space_facts',{}).get('usability')=='restricted':
             if automatic:continue
@@ -152,15 +179,19 @@ def register(doc,result,automatic=True,ids=None):
             if any(a<=B and b>=A for A,B in rows.get((y,z),())):overlap=True;break
         if overlap:c['decision']='review';c['reasons'].append('existing_space_overlap_protected');continue
         # Revalidate actual cells at the current block epoch before any registration.
-        if any(np_solid(doc,y,z,a,b) for y,z,a,b in c['volume_runs']):raise ValueError('후보에 실제 블록이 생겼습니다. 재분석하세요.')
+        for run_index,(y,z,a,b) in enumerate(c['volume_runs']):
+            if run_index%128==0:checkpoint(cancel)
+            values=doc.schematic.blocks[y,z,a:b+1]
+            solid=np.any(values!=air_ids[0]) if len(air_ids)==1 else np.any(~np.isin(values,air_ids))
+            if solid:raise ValueError('후보에 실제 블록이 생겼습니다. 재분석하세요.')
         s=new_space(c['volume_runs'],doc.schematic.size,'3D 공간 '+str(len(spaces)+1),'미지정');s.update(origin='auto' if automatic else 'manual',auto_registered=automatic,recognition={'fingerprint':c['fingerprint'],'source_fingerprint':c.get('source_fingerprint',c['fingerprint']),'method':c.get('method','3d_air_components'),'engine_id':c.get('engine_id','legacy' if c.get('method')=='exterior_voxel_mesh' else '3d_air_components'),'checks':c['checks'],'mesh':c.get('mesh'),'virtual_boundary':c.get('virtual_boundary')})
         spaces.append(s);added.append(s['id']);
         for y,z,a,b in s['runs']:rows.setdefault((y,z),[]).append((a,b))
         c['decision']='registered';c['confirmed']=True;c['registered_space_id']=s['id']
         if result.get('provenance'):
-            s['provenance']=copy.deepcopy(result['provenance'])
+            s['provenance']=snapshot(result['provenance'])
             s['provenance']['origin']='automatic' if automatic else 'approved_candidate'
-    new=copy.deepcopy(result);new['candidates']=candidates
+    new=snapshot({k:v for k,v in result.items() if k!='candidates'});new['candidates']=candidates
     return spaces,new,added
 
 def np_solid(doc,y,z,a,b):return bool(doc.schematic.solid(doc.schematic.blocks[y,z,a:b+1]).any())

@@ -1,10 +1,10 @@
-name: v0.9.4 development validation
+name: v0.9.4.1 development validation
 on:
   push:
-    branches: [dev/v0.9.4]
+    branches: [dev/v0.9.4.1]
   workflow_dispatch:
 concurrency:
-  group: v094-${{ github.ref }}
+  group: v0941-${{ github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -31,11 +31,11 @@ jobs:
       - run: python -m compileall -q src
       - run: python -m pytest -q
       - run: python tools/build_release.py
-      - run: python tools/verify_distribution.py dist/ShipArchitect_v0.9.4.zip --output distribution_check.json
+      - run: python tools/verify_distribution.py dist/ShipArchitect_v0.9.4.1.zip --output distribution_check.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v094-runtime-${{ runner.os }}
+          name: v0941-runtime-${{ runner.os }}
           path: |
             distribution_check.json
-            dist/ShipArchitect_v0.9.4.zip
+            dist/ShipArchitect_v0.9.4.1.zip

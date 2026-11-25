@@ -73,7 +73,7 @@ def enrich_context(doc, bounds, context, cancel=None):
         if not all(a<=v<=b for a,v,b in zip(bounds.lo,point,bounds.hi)):
             continue
         counts[item.get('device_kind',item.get('category','미분류'))] += 1
-        if len(equipment)<96:
+        if len(equipment)<24:
             x,y,z=point
             actual=doc.schematic.palette[int(doc.schematic.blocks[y,z,x])]
             equipment.append(dict(block=item['block'],actual_block=actual,
@@ -81,16 +81,19 @@ def enrich_context(doc, bounds, context, cancel=None):
                                   kind=item.get('device_kind',item.get('category','미분류')),
                                   operation='unverified',membership=item.get('membership_reason','unverified')))
     routes = []
-    for key,item in relevant_routes(doc,bounds)[:32]:
+    for key,item in relevant_routes(doc,bounds)[:8]:
         points = item['positions']
         routes.append(dict(id=key,status=item.get('status','unverified'),
                            game_collision_verified=False,device_operation_verified=False,
-                           points=[[v-a for v,a in zip(point,bounds.lo)] for point in points[:64]],
-                           points_truncated=len(points)>64))
+                           points=[[v-a for v,a in zip(point,bounds.lo)] for point in points[:32]],
+                           points_truncated=len(points)>32))
     reserved = reserved_route_indices(doc,bounds,cancel)
     context['interior_design'] = {
         'scope':'exact_facility_union' if space and space.get('facility_id') else 'exact_registered_space' if space else 'new_project_selection',
-        'facility_members':space.get('members',[]) if space else [],
+        'facility_members':space.get('members',[])[:64] if space else [],
+        'facility_member_count':len(space.get('members',[])) if space else 0,
+        'facility_members_truncated':len(space.get('members',[]))>64 if space else False,
+        'routes_truncated':len(relevant_routes(doc,bounds))>8,
         'unconfirmed_members':space.get('unconfirmed_members',0) if space else 0,
         'facilities':facilities[:16], 'equipment_counts':dict(counts),
         'equipment_samples':equipment, 'equipment_total_in_stored_records':sum(counts.values()),
